@@ -1,0 +1,17 @@
+{
+  "name": "starchart",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Simple webapp with Google auth, deployed to Fly.io",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cookie-session": "^2.1.0",
+    "express": "^4.21.2"
+  }
+}

@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+.git
+.github
+.gitignore
+.env
+.env.*
+README.md
+fly.toml
