@@ -8,6 +8,11 @@ on:
       version:
         description: "Version to release, e.g. 0.1.0 (creates tag v<version>)"
         required: true
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -21,12 +26,14 @@ jobs:
       - name: Determine version
         id: ver
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-          else
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
           fi
+          IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+          CODE=$((MAJOR * 1000000 + MINOR * 1000 + PATCH))
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@v4
         with:
@@ -40,7 +47,7 @@ jobs:
         run: |
           ./gradlew assembleRelease \
             -PversionName="${{ steps.ver.outputs.version }}" \
-            -PversionCode="$GITHUB_RUN_NUMBER"
+            -PversionCode="${{ steps.ver.outputs.code }}"
 
       - name: Rename APK
         run: cp android/app/build/outputs/apk/release/app-release.apk "starchart-v${{ steps.ver.outputs.version }}.apk"

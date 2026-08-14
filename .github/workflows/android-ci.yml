@@ -7,9 +7,18 @@ on:
       - "android/**"
       - ".github/workflows/android-ci.yml"
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Optional: also cut a release as v<version>, e.g. 0.1.0"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
 
 jobs:
   build:
+    if: ${{ github.event_name == 'push' || inputs.release_version == '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,3 +38,9 @@ jobs:
         with:
           name: starchart-apk
           path: android/app/build/outputs/apk/release/app-release.apk
+
+  release:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version != '' }}
+    uses: ./.github/workflows/android-release.yml
+    with:
+      version: ${{ inputs.release_version }}
