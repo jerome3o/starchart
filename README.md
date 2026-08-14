@@ -1,5 +1,58 @@
 # Starchart
 
+Two pieces live in this repo:
+
+- **`android/`** — a native Android app (Kotlin), released as APKs on GitHub
+  releases so it can be installed via [Obtainium](https://github.com/ImranR98/Obtainium).
+- **The root webapp** — a minimal Express app with Google OAuth login, deployed
+  to [Fly.io](https://fly.io) via GitHub Actions (the future backend component).
+
+## Android app
+
+A placeholder star chart: a few hardcoded goals you can award stars to, plus
+the plumbing that actually matters right now — install/launch, notification
+permission, an immediate test notification, a "remind me in a minute" scheduled
+notification (WorkManager), and a daily reminder toggle.
+
+### Installing via Obtainium
+
+1. In Obtainium: **Add App**, and use this repo's URL:
+   `https://github.com/jerome3o/starchart`
+2. Obtainium picks the latest GitHub release and installs the attached APK.
+   New releases show up in Obtainium as updates.
+
+### Cutting a release
+
+Push a tag like `v0.1.0` (or create a GitHub release with such a tag):
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The `Android Release` workflow builds the APK, names the app version after the
+tag, and attaches `starchart-v0.2.0.apk` to a GitHub release. The `Android CI`
+workflow also builds the APK on every push touching `android/` as a smoke test.
+
+### Signing
+
+The APK is signed with the keystore committed at
+`android/keystore/starchart-release.jks` (passwords in
+`android/app/build.gradle.kts`). This is deliberate: Obtainium requires every
+release to be signed with the same key, and this key's only job is to let your
+phone accept updates for a personal sideloaded app — it guards no data or
+accounts. Don't reuse it for anything that matters (e.g. a Play Store app).
+
+### Local build
+
+```sh
+cd android && ./gradlew assembleRelease
+# APK at android/app/build/outputs/apk/release/app-release.apk
+```
+
+Requires an Android SDK (set `sdk.dir` in `android/local.properties`).
+
+## Webapp
+
 A minimal Express webapp with Google OAuth login, deployed to [Fly.io](https://fly.io)
 via GitHub Actions. Login is gated to an allow-list of Google accounts.
 
