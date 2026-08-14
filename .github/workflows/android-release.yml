@@ -3,6 +3,11 @@ name: Android Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.1.0 (creates tag v<version>)"
+        required: true
 
 permissions:
   contents: write
@@ -12,6 +17,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@v4
         with:
@@ -23,16 +38,16 @@ jobs:
       - name: Build signed release APK
         working-directory: android
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           ./gradlew assembleRelease \
-            -PversionName="$VERSION" \
+            -PversionName="${{ steps.ver.outputs.version }}" \
             -PversionCode="$GITHUB_RUN_NUMBER"
 
       - name: Rename APK
-        run: cp android/app/build/outputs/apk/release/app-release.apk "starchart-${GITHUB_REF_NAME}.apk"
+        run: cp android/app/build/outputs/apk/release/app-release.apk "starchart-v${{ steps.ver.outputs.version }}.apk"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.ver.outputs.version }}
           files: starchart-*.apk
           generate_release_notes: true
