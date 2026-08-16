@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Starchart</string>
+    <string name="app_title">Starchart ⭐</string>
+    <string name="app_subtitle">Placeholder build — testing install, launch, and notifications.</string>
+
+    <string name="section_goals">Goals</string>
+    <string name="section_notifications">Notifications</string>
+
+    <string name="btn_add_star">＋⭐</string>
+    <string name="no_stars_yet">No stars yet</string>
+
+    <string name="btn_test_notification">Send test notification</string>
+    <string name="btn_notify_in_one_minute">Remind me in about a minute</string>
+    <string name="switch_daily_reminder">Daily reminder</string>
+
+    <string name="channel_reminders">Reminders</string>
+    <string name="channel_reminders_description">Scheduled goal reminders</string>
+
+    <string name="test_notification_text">Test notification — everything works! ⭐</string>
+    <string name="scheduled_notification_text">Scheduled reminder arrived — scheduling works! ⏰</string>
+    <string name="scheduled_notification_toast">Reminder scheduled — expect it in a minute or two</string>
+    <string name="default_reminder_text">Time to check in on your goals ⭐</string>
+    <string name="notifications_denied">Notifications are disabled — reminders won\'t appear. Enable them in system settings.</string>
+</resources>
