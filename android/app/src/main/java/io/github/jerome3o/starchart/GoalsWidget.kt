@@ -38,6 +38,11 @@ class GoalsWidgetProvider : AppWidgetProvider() {
         for (id in ids) manager.updateAppWidget(id, buildViews(context, id))
     }
 
+    override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: android.os.Bundle) {
+        manager.updateAppWidget(id, buildViews(context, id))
+        manager.notifyAppWidgetViewDataChanged(intArrayOf(id), R.id.widget_list)
+    }
+
     override fun onEnabled(context: Context) {
         schedulePeriodicRefresh(context)
         WorkManager.getInstance(context).enqueue(
@@ -152,16 +157,32 @@ class GoalsWidgetProvider : AppWidgetProvider() {
 }
 
 class GoalsWidgetService : RemoteViewsService() {
-    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory = Factory(applicationContext)
+    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory = Factory(
+        applicationContext,
+        intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID),
+    )
 
-    private class Factory(private val context: Context) : RemoteViewsService.RemoteViewsFactory {
+    private class Factory(private val context: Context, private val widgetId: Int) : RemoteViewsService.RemoteViewsFactory {
         private var goals: List<GoalsApi.Goal> = emptyList()
+        private var fractions: Map<Int, Double> = emptyMap()
+        private var barWidthPx = 0
 
         override fun onCreate() = Unit
         override fun onDestroy() = Unit
 
         override fun onDataSetChanged() {
-            goals = GoalsApi.cached(context)?.goals ?: emptyList()
+            val snap = GoalsApi.cached(context)
+            goals = snap?.goals ?: emptyList()
+            fractions = snap?.periods?.mapValues { it.value.fraction } ?: emptyMap()
+            barWidthPx = barWidth()
+        }
+
+        /** Bar width from the widget's current size: minus padding and the + button. */
+        private fun barWidth(): Int {
+            val d = context.resources.displayMetrics.density
+            val options = AppWidgetManager.getInstance(context).getAppWidgetOptions(widgetId)
+            val widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).takeIf { it > 0 } ?: 300
+            return ((widthDp - 28 - 44) * d).toInt()
         }
 
         override fun getCount() = goals.size
@@ -182,10 +203,8 @@ class GoalsWidgetService : RemoteViewsService() {
                 ContextCompat.getColor(context, if (behind) R.color.widget_behind else R.color.widget_text)
             )
 
-            // Scale to ints: fill = done, secondary = expected by now.
-            val max = (g.target * 100).toInt().coerceAtLeast(1)
-            views.setProgressBar(R.id.widget_goal_bar, max, (g.count * 100).coerceAtMost(max), false)
-            views.setInt(R.id.widget_goal_bar, "setSecondaryProgress", (g.targetByNow * 100).toInt().coerceAtMost(max))
+            val fraction = fractions[g.periodDays] ?: 0.0
+            views.setImageViewBitmap(R.id.widget_goal_bar, WidgetBarRenderer.render(context, barWidthPx, g, fraction))
 
             // Both open the slider card: completions are only ever logged by sliding.
             val openSlider = Intent().putExtra(GoalsWidgetProvider.EXTRA_GOAL_ID, g.id)
