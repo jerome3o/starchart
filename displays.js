@@ -83,6 +83,16 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
     const display = key ? db.getDisplayByKey(String(key)) : null;
     if (!display) {
       limiter.fail(req.ip);
+      // A device with a key from a previous server: surface it for approval,
+      // which will adopt the key it presented.
+      const mac = normalizeMac(req.get('ID'));
+      if (mac && key && String(key).length >= 8) {
+        const pending = db.recordPresentedKey(mac, db.hashToken(String(key)), req.get('FW-Version'));
+        return res.status(401).json({
+          status: 401,
+          message: `Approve display ${pending.friendly_id} at ${issuer} then refresh`,
+        });
+      }
       return res.status(401).json({ status: 401, message: 'invalid access token' });
     }
     db.touchDisplay(display.id, {

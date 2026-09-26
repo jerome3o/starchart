@@ -127,6 +127,10 @@ const deviceColumns = db.prepare('PRAGMA table_info(devices)').all().map((c) => 
 if (!deviceColumns.includes('last_error')) {
   db.exec('ALTER TABLE devices ADD COLUMN last_error TEXT');
 }
+const displayColumns = db.prepare('PRAGMA table_info(displays)').all().map((c) => c.name);
+if (!displayColumns.includes('presented_key_hash')) {
+  db.exec('ALTER TABLE displays ADD COLUMN presented_key_hash TEXT');
+}
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
@@ -474,22 +478,41 @@ function requestSetup(mac) {
   db.prepare('UPDATE displays SET setup_requested_at = ? WHERE mac = ?').run(Date.now(), mac);
 }
 
-// Approving a device with a MAC parks a fresh key in pending_key for the
-// device's next /api/setup call to claim; TRMNL devices can't be given a key
-// any other way. Manual keys (no MAC) are returned once, right here.
+// A device hit /api/display with a key we don't know — typically one that was
+// provisioned against a previous server and never calls /api/setup again.
+// Remember the key it presented so approval can simply adopt it.
+function recordPresentedKey(mac, keyHash, fwVersion) {
+  let display = getDisplayByMac(mac);
+  if (!display) display = createPendingDisplay(mac, fwVersion);
+  if (display.status === 'revoked') return display;
+  db.prepare(
+    `UPDATE displays SET presented_key_hash = ?,
+       setup_requested_at = CASE WHEN status = 'active' THEN ? ELSE setup_requested_at END
+     WHERE id = ?`
+  ).run(keyHash, Date.now(), display.id);
+  return getDisplayByMac(mac);
+}
+
+// Approving a device with a MAC either adopts the key it has been presenting,
+// or parks a fresh key in pending_key for its next /api/setup call to claim
+// (TRMNL devices can't be given a key any other way). Manual keys (no MAC)
+// are returned once, right here.
 function approveDisplay(email, { id, label }) {
   const key = crypto.randomBytes(24).toString('hex');
   if (id) {
-    const info = db
-      .prepare(
-        `UPDATE displays SET email = ?, pending_key = ?, status = 'active', setup_requested_at = NULL,
-           label = COALESCE(?, label)
-         WHERE id = ? AND mac IS NOT NULL AND status IN ('pending', 'active')
-           AND (email IS NULL OR email = ?)`
-      )
-      .run(email.toLowerCase(), key, label || null, id, email.toLowerCase());
-    if (info.changes === 0) return null;
-    return { key: null, display: db.prepare('SELECT * FROM displays WHERE id = ?').get(id) };
+    const current = db.prepare('SELECT * FROM displays WHERE id = ?').get(id);
+    if (!current || !current.mac || !['pending', 'active'].includes(current.status)) return null;
+    if (current.email && current.email !== email.toLowerCase()) return null;
+    const adopt = Boolean(current.presented_key_hash);
+    db.prepare(
+      `UPDATE displays SET email = ?, status = 'active', setup_requested_at = NULL,
+         label = COALESCE(?, label),
+         key_hash = CASE WHEN ? THEN presented_key_hash ELSE key_hash END,
+         pending_key = CASE WHEN ? THEN NULL ELSE ? END,
+         presented_key_hash = NULL
+       WHERE id = ?`
+    ).run(email.toLowerCase(), label || null, adopt ? 1 : 0, adopt ? 1 : 0, key, id);
+    return { key: null, adopted: adopt, display: db.prepare('SELECT * FROM displays WHERE id = ?').get(id) };
   }
   const info = db
     .prepare(
@@ -538,6 +561,7 @@ function touchDisplay(id, { batteryVoltage, fwVersion, rssi }) {
 }
 
 module.exports = {
+  hashToken,
   getTimezone,
   setTimezone,
   listGoals,
@@ -553,6 +577,7 @@ module.exports = {
   getDisplayById,
   createPendingDisplay,
   requestSetup,
+  recordPresentedKey,
   approveDisplay,
   claimPendingKey,
   listDisplays,
