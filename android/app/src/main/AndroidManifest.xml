@@ -44,6 +44,15 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".WidgetActionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Starchart.Overlay" />
+
         <receiver
             android:name=".GoalsWidgetProvider"
             android:exported="true"
