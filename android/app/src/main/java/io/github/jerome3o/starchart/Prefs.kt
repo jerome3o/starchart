@@ -10,6 +10,7 @@ object Prefs {
     const val KEY_TRACKING_ENABLED = "tracking_enabled"
     const val KEY_MAP_STYLE = "map_style"
     const val KEY_LAST_TAB = "last_tab"
+    const val KEY_GOALS_CACHE = "goals_cache"
 
     fun get(context: Context): SharedPreferences =
         context.getSharedPreferences(NAME, Context.MODE_PRIVATE)

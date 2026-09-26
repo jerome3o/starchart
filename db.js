@@ -71,6 +71,57 @@ CREATE TABLE IF NOT EXISTS oauth_grants (
 );
 `);
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS user_settings (
+  email TEXT PRIMARY KEY,
+  timezone TEXT NOT NULL DEFAULT 'Europe/London'
+);
+
+CREATE TABLE IF NOT EXISTS goals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  name TEXT NOT NULL,
+  emoji TEXT,
+  target REAL NOT NULL,
+  period_days INTEGER NOT NULL DEFAULT 14,
+  hours_offset REAL NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  archived INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS completions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal_id INTEGER NOT NULL REFERENCES goals(id),
+  time INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  client_id TEXT,
+  note TEXT,
+  deleted_at INTEGER,
+  UNIQUE (goal_id, client_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_completions_goal_time ON completions (goal_id, time);
+
+CREATE TABLE IF NOT EXISTS displays (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT,
+  label TEXT NOT NULL,
+  mac TEXT UNIQUE,
+  key_hash TEXT UNIQUE,
+  friendly_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  refresh_rate INTEGER NOT NULL DEFAULT 900,
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER,
+  battery_voltage REAL,
+  fw_version TEXT,
+  rssi INTEGER,
+  pending_key TEXT,
+  setup_requested_at INTEGER
+);
+`);
+
 // Schema additions after the first release (SQLite has no ADD COLUMN IF NOT EXISTS).
 const deviceColumns = db.prepare('PRAGMA table_info(devices)').all().map((c) => c.name);
 if (!deviceColumns.includes('last_error')) {
@@ -280,7 +331,234 @@ function purgeExpiredOAuth() {
   db.prepare('DELETE FROM oauth_grants WHERE refresh_expires_at < ?').run(Date.now());
 }
 
+// --- User settings -----------------------------------------------------------
+
+function getTimezone(email) {
+  const row = db.prepare('SELECT timezone FROM user_settings WHERE email = ?').get(email.toLowerCase());
+  return row ? row.timezone : 'Europe/London';
+}
+
+function setTimezone(email, timezone) {
+  db.prepare(
+    `INSERT INTO user_settings (email, timezone) VALUES (?, ?)
+     ON CONFLICT(email) DO UPDATE SET timezone = excluded.timezone`
+  ).run(email.toLowerCase(), timezone);
+}
+
+// --- Goals & completions -----------------------------------------------------
+
+function listGoals(email, { includeArchived = false } = {}) {
+  return db
+    .prepare(
+      `SELECT * FROM goals WHERE email = ? ${includeArchived ? '' : 'AND archived = 0'}
+       ORDER BY sort_order ASC, id ASC`
+    )
+    .all(email.toLowerCase());
+}
+
+function getGoal(email, id) {
+  return db.prepare('SELECT * FROM goals WHERE email = ? AND id = ?').get(email.toLowerCase(), id) || null;
+}
+
+function createGoal(email, { name, emoji, target, periodDays, hoursOffset }) {
+  const maxOrder = db
+    .prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM goals WHERE email = ?')
+    .get(email.toLowerCase()).m;
+  const info = db
+    .prepare(
+      `INSERT INTO goals (email, name, emoji, target, period_days, hours_offset, sort_order, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(email.toLowerCase(), name, emoji || null, target, periodDays, hoursOffset, maxOrder + 1, Date.now());
+  return getGoal(email, info.lastInsertRowid);
+}
+
+function updateGoal(email, id, fields) {
+  const allowed = { name: 'name', emoji: 'emoji', target: 'target', period_days: 'period_days',
+    hours_offset: 'hours_offset', sort_order: 'sort_order', archived: 'archived' };
+  const sets = [];
+  const values = [];
+  for (const [key, column] of Object.entries(allowed)) {
+    if (fields[key] !== undefined) {
+      sets.push(`${column} = ?`);
+      values.push(fields[key]);
+    }
+  }
+  if (sets.length) {
+    db.prepare(`UPDATE goals SET ${sets.join(', ')} WHERE email = ? AND id = ?`)
+      .run(...values, email.toLowerCase(), id);
+  }
+  return getGoal(email, id);
+}
+
+// Active completion count per goal within [fromMs, toMs).
+function completionCounts(goalIds, fromMs, toMs) {
+  if (!goalIds.length) return new Map();
+  const rows = db
+    .prepare(
+      `SELECT goal_id, COUNT(*) AS c FROM completions
+       WHERE goal_id IN (${goalIds.map(() => '?').join(',')})
+         AND deleted_at IS NULL AND time >= ? AND time < ?
+       GROUP BY goal_id`
+    )
+    .all(...goalIds, fromMs, toMs);
+  return new Map(rows.map((r) => [r.goal_id, r.c]));
+}
+
+function listCompletions(goalId, fromMs, toMs) {
+  return db
+    .prepare(
+      `SELECT id, time, source, note FROM completions
+       WHERE goal_id = ? AND deleted_at IS NULL AND time >= ? AND time < ? ORDER BY time ASC`
+    )
+    .all(goalId, fromMs, toMs);
+}
+
+// Returns {id, created}; a repeated client_id is a no-op (created: false).
+function addCompletion(goalId, { time, source, clientId, note }) {
+  const info = db
+    .prepare(
+      `INSERT OR IGNORE INTO completions (goal_id, time, source, client_id, note) VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(goalId, time, source, clientId || null, note || null);
+  return { id: info.lastInsertRowid, created: info.changes === 1 };
+}
+
+// Soft-deletes the most recent active completion in [fromMs, toMs); returns it or null.
+const undoLatestCompletion = db.transaction((goalId, fromMs, toMs) => {
+  const row = db
+    .prepare(
+      `SELECT id, time FROM completions WHERE goal_id = ? AND deleted_at IS NULL
+         AND time >= ? AND time < ? ORDER BY time DESC, id DESC LIMIT 1`
+    )
+    .get(goalId, fromMs, toMs);
+  if (!row) return null;
+  db.prepare('UPDATE completions SET deleted_at = ? WHERE id = ?').run(Date.now(), row.id);
+  return row;
+});
+
+// --- E-ink displays ----------------------------------------------------------
+
+function friendlyId() {
+  return crypto.randomBytes(3).toString('hex').toUpperCase();
+}
+
+function getDisplayByMac(mac) {
+  return db.prepare('SELECT * FROM displays WHERE mac = ?').get(mac) || null;
+}
+
+function getDisplayByKey(key) {
+  const display = db
+    .prepare("SELECT * FROM displays WHERE key_hash = ? AND status = 'active'")
+    .get(hashToken(key));
+  return display || null;
+}
+
+function getDisplayById(id) {
+  return db.prepare('SELECT * FROM displays WHERE id = ?').get(id) || null;
+}
+
+// A device we've never seen asked to be set up; it waits for approval on the web page.
+function createPendingDisplay(mac, fwVersion) {
+  db.prepare(
+    `INSERT OR IGNORE INTO displays (label, mac, friendly_id, status, created_at, fw_version)
+     VALUES (?, ?, ?, 'pending', ?, ?)`
+  ).run(`TRMNL ${mac.slice(-5)}`, mac, friendlyId(), Date.now(), fwVersion || null);
+  return getDisplayByMac(mac);
+}
+
+// An already-known device called /api/setup again (factory reset, new
+// firmware). Its existing key keeps working; a human must approve before a
+// new key is handed out, so a spoofed MAC can't hijack or disable a display.
+function requestSetup(mac) {
+  db.prepare('UPDATE displays SET setup_requested_at = ? WHERE mac = ?').run(Date.now(), mac);
+}
+
+// Approving a device with a MAC parks a fresh key in pending_key for the
+// device's next /api/setup call to claim; TRMNL devices can't be given a key
+// any other way. Manual keys (no MAC) are returned once, right here.
+function approveDisplay(email, { id, label }) {
+  const key = crypto.randomBytes(24).toString('hex');
+  if (id) {
+    const info = db
+      .prepare(
+        `UPDATE displays SET email = ?, pending_key = ?, status = 'active', setup_requested_at = NULL,
+           label = COALESCE(?, label)
+         WHERE id = ? AND mac IS NOT NULL AND status IN ('pending', 'active')
+           AND (email IS NULL OR email = ?)`
+      )
+      .run(email.toLowerCase(), key, label || null, id, email.toLowerCase());
+    if (info.changes === 0) return null;
+    return { key: null, display: db.prepare('SELECT * FROM displays WHERE id = ?').get(id) };
+  }
+  const info = db
+    .prepare(
+      `INSERT INTO displays (email, label, friendly_id, key_hash, status, created_at)
+       VALUES (?, ?, ?, ?, 'active', ?)`
+    )
+    .run(email.toLowerCase(), label || 'Display', friendlyId(), hashToken(key), Date.now());
+  return { key, display: db.prepare('SELECT * FROM displays WHERE id = ?').get(info.lastInsertRowid) };
+}
+
+// The device's /api/setup call collects its approved key (once).
+const claimPendingKey = db.transaction((mac) => {
+  const row = db.prepare("SELECT id, pending_key FROM displays WHERE mac = ? AND status = 'active'").get(mac);
+  if (!row || !row.pending_key) return null;
+  db.prepare('UPDATE displays SET key_hash = ?, pending_key = NULL WHERE id = ?')
+    .run(hashToken(row.pending_key), row.id);
+  return row.pending_key;
+});
+
+function listDisplays(email) {
+  return db
+    .prepare(
+      `SELECT * FROM displays WHERE email = ? OR status = 'pending' ORDER BY status DESC, created_at ASC`
+    )
+    .all(email.toLowerCase());
+}
+
+function revokeDisplay(email, id) {
+  db.prepare(
+    `UPDATE displays SET status = 'revoked', key_hash = ? WHERE id = ? AND (email = ? OR status = 'pending')`
+  ).run(`revoked:${crypto.randomBytes(8).toString('hex')}`, id, email.toLowerCase());
+}
+
+function updateDisplaySettings(email, id, { label, refreshRate }) {
+  db.prepare(
+    `UPDATE displays SET label = COALESCE(?, label), refresh_rate = COALESCE(?, refresh_rate)
+     WHERE email = ? AND id = ?`
+  ).run(label || null, refreshRate || null, email.toLowerCase(), id);
+}
+
+function touchDisplay(id, { batteryVoltage, fwVersion, rssi }) {
+  db.prepare(
+    `UPDATE displays SET last_seen_at = ?, battery_voltage = COALESCE(?, battery_voltage),
+       fw_version = COALESCE(?, fw_version), rssi = COALESCE(?, rssi) WHERE id = ?`
+  ).run(Date.now(), batteryVoltage ?? null, fwVersion || null, rssi ?? null, id);
+}
+
 module.exports = {
+  getTimezone,
+  setTimezone,
+  listGoals,
+  getGoal,
+  createGoal,
+  updateGoal,
+  completionCounts,
+  listCompletions,
+  addCompletion,
+  undoLatestCompletion,
+  getDisplayByMac,
+  getDisplayByKey,
+  getDisplayById,
+  createPendingDisplay,
+  requestSetup,
+  approveDisplay,
+  claimPendingKey,
+  listDisplays,
+  revokeDisplay,
+  updateDisplaySettings,
+  touchDisplay,
   createDevice,
   deviceForToken,
   listDevices,

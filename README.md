@@ -79,6 +79,37 @@ The app can upload its location history to the webapp's API:
 - **Management:** the webapp home page lists linked devices with fix counts
   and revoke buttons. Revoking only invalidates the token — fixes are kept.
 
+## Goals (the actual star chart)
+
+Goals live in the Starchart server — no Home Assistant needed. Each goal has a
+name, emoji, a target number of completions per period (14 days by default,
+or 7), and an optional grace period in hours. Periods are anchored to Sunday
+2020-01-05 in the user's timezone (the app reports its zone), matching the
+original TRMNL dashboard, and "target by now" moves smoothly through the day.
+
+- **Phone:** the Star chart tab lists goals with a pace bar (fill = done,
+  marker = where you should be), Done/undo buttons, and add/edit/archive.
+  Updates are optimistic and idempotent (`client_id` per completion).
+- **API (device token):** `GET/POST /api/goals`, `POST|PATCH /api/goals/:id`,
+  `DELETE /api/goals/:id` (archive), `POST /api/goals/:id/completions`,
+  `POST /api/goals/:id/undo`, `GET /api/goals/:id/completions`.
+- **Nothing is deleted:** undo soft-deletes a completion; archive hides a goal.
+
+## E-ink displays (TRMNL BYOS)
+
+The server renders the dashboard as an 800×480 1-bit PNG (`render.js`,
+@napi-rs/canvas with vendored DejaVu, Noto Emoji and Noto Sans SC fonts) and
+speaks the TRMNL protocol: `POST /api/setup`, `GET /api/display`, `POST /api/log`.
+
+Provisioning is approval-based so keys are only ever issued after a human
+click: point a TRMNL at `https://starchart.fly.dev`; it appears under
+**E-ink displays** on the home page as pending; **Approve** parks a key for its
+next `/api/setup` call. A known device asking to be set up again keeps its old
+key until you approve the re-setup. Image URLs are HMAC-signed and expire in
+5 minutes. Non-TRMNL displays get a manual key (**Create key**) and call
+`GET /api/display` with it as `Access-Token`. `/displays/preview.png` shows
+the current render.
+
 ## MCP server (for Claude.ai)
 
 The webapp exposes the location data over MCP at `https://starchart.fly.dev/mcp`
@@ -98,8 +129,10 @@ itself:
   failures are rate-limited per IP.
 - **Revocation:** the home page lists connected apps with revoke buttons.
 
-Tools: `get_latest_location`, `list_devices`, `list_days_with_data`,
-`get_day_summary`, `get_location_history` — all scoped to the signed-in user.
+Tools, gated by scope (`location:read`, `goals:read`, `goals:write`):
+`get_latest_location`, `list_devices`, `list_days_with_data`, `get_day_summary`,
+`get_location_history`, `list_goals`, `log_completion`, `undo_completion`,
+`create_goal` — all scoped to the signed-in user.
 
 **Connect Claude.ai:** Settings → Connectors → Add custom connector → URL
 `https://starchart.fly.dev/mcp` → Connect. You'll be sent through Google
