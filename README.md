@@ -14,6 +14,13 @@ the plumbing that actually matters right now — install/launch, notification
 permission, an immediate test notification, a "remind me in a minute" scheduled
 notification (WorkManager), and a daily reminder toggle.
 
+Since then it has grown a tilt-ball screen overlay, ~1/minute location
+tracking into a local SQLite DB, a native day-by-day explorer map (MapLibre on
+OpenFreeMap tiles, no API key), server sync, and a "Permissions & reliability"
+panel that shows every permission the app wants with tap-to-grant rows.
+Tracking auto-resumes when the app is opened and, with all-the-time location,
+after reboots and updates.
+
 ### Installing via Obtainium
 
 1. In Obtainium: **Add App**, and use this repo's URL:

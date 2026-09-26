@@ -1,7 +1,6 @@
 'use strict';
 
 const crypto = require('crypto');
-const path = require('path');
 const express = require('express');
 const cookieSession = require('cookie-session');
 const db = require('./db');
@@ -221,30 +220,6 @@ app.post('/devices/:id/revoke', requireAuth, express.urlencoded({ extended: fals
 
 app.use('/api', api);
 
-// --- Explorer map (session-authed, browser-facing) ---------------------------
-
-// Vendored front-end libraries (Leaflet) — public, no user data.
-app.use('/vendor', express.static(path.join(__dirname, 'public', 'vendor'), { maxAge: '7d' }));
-
-app.get('/map', requireAuth, (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'map.html'));
-});
-
-app.get('/fixes.json', requireAuth, (req, res) => {
-  const from = Number(req.query.from);
-  const to = Number(req.query.to);
-  const maxRange = 8 * 24 * 60 * 60 * 1000;
-  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > maxRange) {
-    return res.status(400).json({ error: 'expected from/to epoch ms spanning at most 8 days' });
-  }
-  res.json(db.fixesBetween(req.session.user.email, from, to));
-});
-
-app.get('/fixes/days', requireAuth, (req, res) => {
-  const offset = Math.max(-900, Math.min(900, Number(req.query.offset) || 0));
-  res.json(db.daysWithFixes(req.session.user.email, offset));
-});
-
 app.get('/', requireAuth, (req, res) => {
   const u = req.session.user;
   const devices = db.listDevices(u.email);
@@ -273,7 +248,6 @@ app.get('/', requireAuth, (req, res) => {
        <h1>⭐ Hello, ${u.name || u.email}</h1>
        <p>You're signed in as <strong>${u.email}</strong>.</p>
        <ul style="list-style:none;padding:0">${deviceRows}</ul>
-       <a class="btn" href="/map">🗺️ Explore map</a>
        <form method="POST" action="/logout"><button class="btn" type="submit">Sign out</button></form>
        <p class="muted">Deployed on Fly.io · authed with Google</p>`
     )

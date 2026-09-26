@@ -1,6 +1,7 @@
 package io.github.jerome3o.starchart
 
 import android.Manifest
+import android.app.AlarmManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -45,16 +46,22 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    // Set when the location permission request came from the tracking switch,
+    // so a grant from the permissions panel doesn't silently start tracking.
+    private var startTrackingAfterGrant = false
+
     private val requestLocationPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-            if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                 grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-            ) {
+            if (granted && startTrackingAfterGrant) {
                 startLocationTracking()
-            } else {
+            } else if (!granted) {
                 findViewById<MaterialSwitch>(R.id.switch_location).isChecked = false
                 Toast.makeText(this, R.string.location_denied, Toast.LENGTH_LONG).show()
             }
+            startTrackingAfterGrant = false
+            updatePermissionStatus()
         }
 
     private val requestBackgroundLocation =
@@ -65,6 +72,7 @@ class MainActivity : AppCompatActivity() {
                 R.string.background_location_denied
             }
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            updatePermissionStatus()
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,6 +85,7 @@ class MainActivity : AppCompatActivity() {
             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
+        setUpPermissions()
         setUpGoalList()
         setUpNotificationButtons()
         setUpDailyReminderSwitch()
@@ -93,11 +102,102 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Tracking survives reboots and app updates only via BootReceiver, which
+        // needs background location; opening the app is the reliable fallback.
+        val trackingEnabled = prefs().getBoolean(KEY_TRACKING_ENABLED, false) && hasLocationPermission()
+        if (trackingEnabled && !LocationService.running) {
+            ContextCompat.startForegroundService(this, Intent(this, LocationService::class.java))
+        }
         findViewById<MaterialSwitch>(R.id.switch_overlay).isChecked = OverlayService.running
-        findViewById<MaterialSwitch>(R.id.switch_location).isChecked = LocationService.running
+        findViewById<MaterialSwitch>(R.id.switch_location).isChecked = trackingEnabled
+        updatePermissionStatus()
         updateLocationStatus()
         updateSyncStatus()
     }
+
+    // --- Permissions & reliability -------------------------------------------
+
+    private fun setUpPermissions() {
+        findViewById<Button>(R.id.btn_perm_notifications).setOnClickListener {
+            when {
+                Notifications.canNotify(this) -> alreadyGranted()
+                Build.VERSION.SDK_INT >= 33 ->
+                    requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                else -> startActivity(
+                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                )
+            }
+        }
+        findViewById<Button>(R.id.btn_perm_location).setOnClickListener {
+            if (hasLocationPermission()) alreadyGranted() else requestLocationPermissions.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                )
+            )
+        }
+        findViewById<Button>(R.id.btn_perm_background_location).setOnClickListener {
+            when {
+                hasBackgroundLocation() -> alreadyGranted()
+                !hasLocationPermission() -> Toast.makeText(
+                    this, R.string.background_location_needs_foreground, Toast.LENGTH_LONG
+                ).show()
+                else -> requestBackgroundLocation.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            }
+        }
+        findViewById<Button>(R.id.btn_perm_overlay).setOnClickListener {
+            if (Settings.canDrawOverlays(this)) alreadyGranted() else startActivity(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            )
+        }
+        findViewById<Button>(R.id.btn_perm_battery).setOnClickListener {
+            if (isIgnoringBatteryOptimizations()) alreadyGranted() else startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        }
+        findViewById<Button>(R.id.btn_perm_exact_alarms).setOnClickListener {
+            if (canScheduleExactAlarms()) alreadyGranted() else if (Build.VERSION.SDK_INT >= 31) {
+                startActivity(
+                    Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName"))
+                )
+            }
+        }
+    }
+
+    private fun updatePermissionStatus() {
+        fun label(button: Int, name: Int, granted: Boolean) {
+            findViewById<Button>(button).text = getString(
+                if (granted) R.string.perm_granted_prefix else R.string.perm_missing_prefix,
+                getString(name)
+            )
+        }
+        label(R.id.btn_perm_notifications, R.string.perm_notifications, Notifications.canNotify(this))
+        label(R.id.btn_perm_location, R.string.perm_location, hasLocationPermission())
+        label(R.id.btn_perm_background_location, R.string.perm_background_location, hasBackgroundLocation())
+        label(R.id.btn_perm_overlay, R.string.perm_overlay, Settings.canDrawOverlays(this))
+        label(R.id.btn_perm_battery, R.string.perm_battery, isIgnoringBatteryOptimizations())
+        label(R.id.btn_perm_exact_alarms, R.string.perm_exact_alarms, canScheduleExactAlarms())
+    }
+
+    private fun alreadyGranted() {
+        Toast.makeText(this, R.string.perm_already_granted, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun hasBackgroundLocation(): Boolean =
+        Build.VERSION.SDK_INT < 29 || ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun isIgnoringBatteryOptimizations(): Boolean =
+        getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+
+    private fun canScheduleExactAlarms(): Boolean =
+        Build.VERSION.SDK_INT < 31 ||
+            getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
 
     // --- Server sync ---------------------------------------------------------
 
@@ -197,6 +297,7 @@ class MainActivity : AppCompatActivity() {
                 if (hasLocationPermission()) {
                     startLocationTracking()
                 } else {
+                    startTrackingAfterGrant = true
                     requestLocationPermissions.launch(
                         arrayOf(
                             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -210,35 +311,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        findViewById<Button>(R.id.btn_explore_map).setOnClickListener {
+            startActivity(Intent(this, MapActivity::class.java))
+        }
+
         findViewById<Button>(R.id.btn_export_locations).setOnClickListener { exportLocations() }
-
-        findViewById<Button>(R.id.btn_background_location).setOnClickListener {
-            when {
-                Build.VERSION.SDK_INT < 29 -> Toast.makeText(
-                    this, R.string.background_location_granted, Toast.LENGTH_SHORT
-                ).show()
-                !hasLocationPermission() -> Toast.makeText(
-                    this, R.string.background_location_needs_foreground, Toast.LENGTH_LONG
-                ).show()
-                else -> requestBackgroundLocation.launch(
-                    Manifest.permission.ACCESS_BACKGROUND_LOCATION
-                )
-            }
-        }
-
-        findViewById<Button>(R.id.btn_battery_optimizations).setOnClickListener {
-            val powerManager = getSystemService(PowerManager::class.java)
-            if (powerManager.isIgnoringBatteryOptimizations(packageName)) {
-                Toast.makeText(this, R.string.battery_already_exempt, Toast.LENGTH_SHORT).show()
-            } else {
-                startActivity(
-                    Intent(
-                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:$packageName")
-                    )
-                )
-            }
-        }
     }
 
     private fun startLocationTracking() {
