@@ -79,7 +79,7 @@
 
     <string name="section_sync">Server sync</string>
     <string name="sync_status_unlinked">Not linked — location data stays on this phone only.</string>
-    <string name="sync_status_linked">%1$d fixes uploaded · last sync %2$s. Syncs hourly.</string>
+    <string name="sync_status_linked">%1$d fixes uploaded · last sync %2$s. New fixes upload immediately; hourly catch-up.</string>
     <string name="sync_never">never</string>
     <string name="btn_link_server">Link to server</string>
     <string name="btn_unlink_server">Unlink from server</string>
