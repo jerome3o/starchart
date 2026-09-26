@@ -48,6 +48,18 @@
     <string name="location_notification_starting">Waiting for first fix…</string>
     <string name="location_notification_status">%1$d fixes · last at %2$s</string>
 
+    <string name="section_sync">Server sync</string>
+    <string name="sync_status_unlinked">Not linked — location data stays on this phone only.</string>
+    <string name="sync_status_linked">%1$d fixes uploaded · last sync %2$s. Syncs hourly.</string>
+    <string name="sync_never">never</string>
+    <string name="btn_link_server">Link to server</string>
+    <string name="btn_unlink_server">Unlink from server</string>
+    <string name="btn_sync_now">Sync now</string>
+    <string name="sync_linked_toast">Linked! Uploading location history…</string>
+    <string name="sync_unlinked_toast">Unlinked. Also revoke this device on the website.</string>
+    <string name="sync_not_linked_toast">Link to the server first.</string>
+    <string name="sync_started_toast">Sync started.</string>
+
     <string name="channel_services">Background services</string>
     <string name="channel_services_description">Persistent notifications while the overlay or location tracking runs</string>
 </resources>

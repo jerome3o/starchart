@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep the device token out of cloud backups and device transfers. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="sync.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="sync.xml" />
+    </device-transfer>
+</data-extraction-rules>
