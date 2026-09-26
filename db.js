@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS fixes (
 CREATE INDEX IF NOT EXISTS idx_fixes_device_time ON fixes (device_id, time);
 `);
 
+// Schema additions after the first release (SQLite has no ADD COLUMN IF NOT EXISTS).
+const deviceColumns = db.prepare('PRAGMA table_info(devices)').all().map((c) => c.name);
+if (!deviceColumns.includes('last_error')) {
+  db.exec('ALTER TABLE devices ADD COLUMN last_error TEXT');
+}
+
 function hashToken(token) {
   return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
 }
@@ -59,10 +65,14 @@ function deviceForToken(token) {
   return device;
 }
 
+function setDeviceError(deviceId, message) {
+  db.prepare('UPDATE devices SET last_error = ? WHERE id = ?').run(message, deviceId);
+}
+
 function listDevices(email) {
   return db
     .prepare(
-      `SELECT d.id, d.label, d.created_at, d.last_seen_at,
+      `SELECT d.id, d.label, d.created_at, d.last_seen_at, d.last_error,
               COUNT(f.id) AS fix_count, MAX(f.time) AS last_fix_time
        FROM devices d LEFT JOIN fixes f ON f.device_id = d.id
        WHERE d.email = ?
@@ -98,4 +108,39 @@ function fixCount(deviceId) {
   return db.prepare('SELECT COUNT(*) AS c FROM fixes WHERE device_id = ?').get(deviceId).c;
 }
 
-module.exports = { createDevice, deviceForToken, listDevices, revokeDevice, insertFixes, fixCount };
+// All of a user's fixes (across devices) in [fromMs, toMs), oldest first.
+function fixesBetween(email, fromMs, toMs, limit = 20000) {
+  return db
+    .prepare(
+      `SELECT f.device_id AS deviceId, d.label, f.time, f.lat, f.lon, f.accuracy
+       FROM fixes f JOIN devices d ON d.id = f.device_id
+       WHERE d.email = ? AND f.time >= ? AND f.time < ?
+       ORDER BY f.time ASC LIMIT ?`
+    )
+    .all(email.toLowerCase(), fromMs, toMs, limit);
+}
+
+// Calendar days (in the viewer's timezone, given as minutes behind UTC like
+// JS getTimezoneOffset) that have at least one fix, with counts.
+function daysWithFixes(email, offsetMinutes) {
+  return db
+    .prepare(
+      `SELECT date((f.time / 1000) - ?, 'unixepoch') AS day, COUNT(*) AS count
+       FROM fixes f JOIN devices d ON d.id = f.device_id
+       WHERE d.email = ?
+       GROUP BY day ORDER BY day ASC`
+    )
+    .all(offsetMinutes * 60, email.toLowerCase());
+}
+
+module.exports = {
+  createDevice,
+  deviceForToken,
+  listDevices,
+  revokeDevice,
+  setDeviceError,
+  insertFixes,
+  fixCount,
+  fixesBetween,
+  daysWithFixes,
+};

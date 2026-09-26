@@ -136,23 +136,31 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, R.string.sync_started_toast, Toast.LENGTH_SHORT).show()
             }
         }
+
+        // Refresh the status line whenever a sync run finishes (or fails).
+        WorkManager.getInstance(this)
+            .getWorkInfosForUniqueWorkLiveData(SyncWorker.SYNC_NOW_WORK)
+            .observe(this) { updateSyncStatus() }
     }
 
     private fun updateSyncStatus() {
         val status = findViewById<TextView>(R.id.sync_status)
         val linkButton = findViewById<Button>(R.id.btn_link_server)
+        val error = Sync.lastError(this)
         if (Sync.isLinked(this)) {
             linkButton.setText(R.string.btn_unlink_server)
             val lastSync = Sync.lastSyncTime(this)
-            status.text = getString(
+            val base = getString(
                 R.string.sync_status_linked,
                 Sync.uploadedCount(this),
                 if (lastSync == 0L) getString(R.string.sync_never)
                 else DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(lastSync))
             )
+            status.text = if (error == null) base else "$base\n⚠️ $error"
         } else {
             linkButton.setText(R.string.btn_link_server)
-            status.text = getString(R.string.sync_status_unlinked)
+            val base = getString(R.string.sync_status_unlinked)
+            status.text = if (error == null) base else "$base\n⚠️ $error"
         }
     }
 

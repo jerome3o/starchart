@@ -34,16 +34,20 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
         } catch (e: Sync.UnauthorizedException) {
             // Token revoked server-side; unlink so the UI says so.
             Sync.unlink(context)
+            Sync.recordError(context, "server rejected this device's token — unlinked")
             return Result.failure()
         } catch (e: Exception) {
+            Sync.recordError(context, "${e.javaClass.simpleName}: ${e.message ?: "unknown error"}")
             return Result.retry()
         }
+        Sync.recordSuccess(context)
         return Result.success()
     }
 
     companion object {
         private const val BATCH_SIZE = 500
         private const val PERIODIC_WORK = "sync-fixes"
+        const val SYNC_NOW_WORK = "sync-now"
 
         fun schedulePeriodic(context: Context) {
             val request = PeriodicWorkRequestBuilder<SyncWorker>(1, TimeUnit.HOURS)
@@ -68,7 +72,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .build()
             WorkManager.getInstance(context)
-                .enqueueUniqueWork("sync-now", ExistingWorkPolicy.REPLACE, request)
+                .enqueueUniqueWork(SYNC_NOW_WORK, ExistingWorkPolicy.REPLACE, request)
         }
     }
 }
