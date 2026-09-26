@@ -35,6 +35,14 @@ jobs:
             SESSION_SECRET="$SESSION_SECRET" \
             ALLOWED_EMAILS="$ALLOWED_EMAILS"
 
+      # Persistent volume for the SQLite database (no-op once it exists).
+      - name: Ensure data volume exists
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl volumes list --json | grep -q '"starchart_data"' || \
+            flyctl volumes create starchart_data --region iad --size 1 --yes
+
       - name: Deploy
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

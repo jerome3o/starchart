@@ -10,6 +10,14 @@ class LocationDb(context: Context) :
 
     data class Fix(val timeMs: Long, val lat: Double, val lon: Double, val accuracyM: Float)
 
+    data class StoredFix(
+        val id: Long,
+        val timeMs: Long,
+        val lat: Double,
+        val lon: Double,
+        val accuracyM: Float,
+    )
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -47,6 +55,23 @@ class LocationDb(context: Context) :
         ).use {
             if (!it.moveToFirst()) return null
             Fix(it.getLong(0), it.getDouble(1), it.getDouble(2), it.getFloat(3))
+        }
+
+    fun fixesAfter(id: Long, limit: Int): List<StoredFix> =
+        readableDatabase.rawQuery(
+            "SELECT id, time, lat, lon, accuracy FROM fixes WHERE id > ? ORDER BY id ASC LIMIT ?",
+            arrayOf(id.toString(), limit.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        StoredFix(
+                            cursor.getLong(0), cursor.getLong(1),
+                            cursor.getDouble(2), cursor.getDouble(3), cursor.getFloat(4)
+                        )
+                    )
+                }
+            }
         }
 
     fun writeCsv(appendable: Appendable) {

@@ -51,6 +51,23 @@ cd android && ./gradlew assembleRelease
 
 Requires an Android SDK (set `sdk.dir` in `android/local.properties`).
 
+## Server sync
+
+The app can upload its location history to the webapp's API:
+
+- **Pairing:** "Link to server" in the app opens `/pair/start` in the browser —
+  Google login (allow-list enforced) → the server mints a random device token
+  (stores only its SHA-256 hash) → hands it back via a `starchart://pair` deep
+  link. The Google OAuth secrets never touch the phone; the phone token is kept
+  in a prefs file excluded from Android backups.
+- **Sync:** a WorkManager job uploads unsynced fixes hourly (plus "Sync now")
+  in idempotent batches of 500 to `POST /api/fixes` (bearer auth, per-IP
+  failure rate limiting). Nothing is ever deleted, on the phone or the server.
+- **Storage:** SQLite via better-sqlite3 on a Fly volume (`starchart_data`,
+  created automatically by the deploy workflow) at `/data`.
+- **Management:** the webapp home page lists linked devices with fix counts
+  and revoke buttons. Revoking only invalidates the token — fixes are kept.
+
 ## Webapp
 
 A minimal Express webapp with Google OAuth login, deployed to [Fly.io](https://fly.io)

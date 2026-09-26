@@ -1,4 +1,5 @@
-FROM node:20-alpine
+# slim (glibc) rather than alpine so better-sqlite3 uses prebuilt binaries.
+FROM node:20-slim
 
 WORKDIR /app
 

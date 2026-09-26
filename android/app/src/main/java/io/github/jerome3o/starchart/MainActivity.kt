@@ -82,6 +82,13 @@ class MainActivity : AppCompatActivity() {
         setUpDailyReminderSwitch()
         setUpOverlaySwitch()
         setUpLocationTracking()
+        setUpSync()
+        handlePairIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handlePairIntent(intent)
     }
 
     override fun onResume() {
@@ -89,6 +96,64 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialSwitch>(R.id.switch_overlay).isChecked = OverlayService.running
         findViewById<MaterialSwitch>(R.id.switch_location).isChecked = LocationService.running
         updateLocationStatus()
+        updateSyncStatus()
+    }
+
+    // --- Server sync ---------------------------------------------------------
+
+    private fun handlePairIntent(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "starchart" || data.host != "pair") return
+        val token = data.getQueryParameter("token")
+        if (token.isNullOrEmpty()) return
+        Sync.storeToken(this, token)
+        SyncWorker.schedulePeriodic(this)
+        SyncWorker.syncNow(this)
+        Toast.makeText(this, R.string.sync_linked_toast, Toast.LENGTH_LONG).show()
+        updateSyncStatus()
+    }
+
+    private fun setUpSync() {
+        findViewById<Button>(R.id.btn_link_server).setOnClickListener {
+            if (Sync.isLinked(this)) {
+                Sync.unlink(this)
+                SyncWorker.cancelPeriodic(this)
+                Toast.makeText(this, R.string.sync_unlinked_toast, Toast.LENGTH_SHORT).show()
+                updateSyncStatus()
+            } else {
+                val label = Uri.encode(Build.MODEL ?: "Android device")
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("${Sync.SERVER_URL}/pair/start?label=$label"))
+                )
+            }
+        }
+
+        findViewById<Button>(R.id.btn_sync_now).setOnClickListener {
+            if (!Sync.isLinked(this)) {
+                Toast.makeText(this, R.string.sync_not_linked_toast, Toast.LENGTH_SHORT).show()
+            } else {
+                SyncWorker.syncNow(this)
+                Toast.makeText(this, R.string.sync_started_toast, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun updateSyncStatus() {
+        val status = findViewById<TextView>(R.id.sync_status)
+        val linkButton = findViewById<Button>(R.id.btn_link_server)
+        if (Sync.isLinked(this)) {
+            linkButton.setText(R.string.btn_unlink_server)
+            val lastSync = Sync.lastSyncTime(this)
+            status.text = getString(
+                R.string.sync_status_linked,
+                Sync.uploadedCount(this),
+                if (lastSync == 0L) getString(R.string.sync_never)
+                else DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(lastSync))
+            )
+        } else {
+            linkButton.setText(R.string.btn_link_server)
+            status.text = getString(R.string.sync_status_unlinked)
+        }
     }
 
     // --- Overlay -----------------------------------------------------------

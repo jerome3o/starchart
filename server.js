@@ -3,6 +3,8 @@
 const crypto = require('crypto');
 const express = require('express');
 const cookieSession = require('cookie-session');
+const db = require('./db');
+const api = require('./api');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -49,6 +51,8 @@ function oauthConfigured() {
 
 function requireAuth(req, res, next) {
   if (req.session && req.session.user) return next();
+  // Remember where the user was headed so login can resume it (pairing flow).
+  if (req.session) req.session.returnTo = req.originalUrl;
   return res.redirect('/login');
 }
 
@@ -168,7 +172,9 @@ app.get('/auth/google/callback', async (req, res) => {
       name: profile.name,
       picture: profile.picture,
     };
-    res.redirect('/');
+    const returnTo = req.session.returnTo;
+    req.session.returnTo = undefined;
+    res.redirect(returnTo && returnTo.startsWith('/') ? returnTo : '/');
   } catch (err) {
     console.error('OAuth callback error:', err);
     res.status(500).send('Authentication failed. Please try again.');
@@ -184,14 +190,60 @@ app.post('/logout', (req, res) => {
   res.redirect('/login');
 });
 
+// --- Device pairing & sync API ---------------------------------------------
+
+// Opened by the Android app in a browser tab. After Google login, mints a
+// device token and hands it back to the app via the starchart:// deep link.
+// The token only ever travels inside this device (custom-scheme intents are
+// resolved locally), and the server keeps just its hash.
+app.get('/pair/start', requireAuth, (req, res) => {
+  const label = String(req.query.label || 'Android device').slice(0, 64);
+  const token = db.createDevice(req.session.user.email, label);
+  const deepLink = `starchart://pair?token=${token}`;
+  res.send(
+    page(
+      'Link device — Starchart',
+      `<h1>📱 Almost there</h1>
+       <p>Linking <strong>${label.replace(/[<>&]/g, '')}</strong> to
+       <strong>${req.session.user.email}</strong>.</p>
+       <a class="btn" href="${deepLink}">Open Starchart to finish</a>
+       <p class="muted">If nothing happens, open the Starchart app manually and try again.</p>
+       <script>location.href = ${JSON.stringify(deepLink)};</script>`
+    )
+  );
+});
+
+app.post('/devices/:id/revoke', requireAuth, express.urlencoded({ extended: false }), (req, res) => {
+  db.revokeDevice(req.session.user.email, Number(req.params.id));
+  res.redirect('/');
+});
+
+app.use('/api', api);
+
 app.get('/', requireAuth, (req, res) => {
   const u = req.session.user;
+  const devices = db.listDevices(u.email);
+  const fmt = (ms) => (ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'never');
+  const deviceRows = devices.length
+    ? devices
+        .map(
+          (d) => `<li style="text-align:left;margin:.5rem 0;">
+            <strong>${d.label.replace(/[<>&]/g, '')}</strong> —
+            ${d.fix_count} fixes, last ${fmt(d.last_fix_time)}
+            <form method="POST" action="/devices/${d.id}/revoke" style="display:inline">
+              <button class="btn" style="padding:.15rem .6rem;font-size:.8rem;background:#7a3b3b" type="submit">Revoke</button>
+            </form>
+          </li>`
+        )
+        .join('')
+    : '<li>No devices linked yet — use “Link to server” in the Android app.</li>';
   res.send(
     page(
       'Starchart',
       `${u.picture ? `<img class="avatar" src="${u.picture}" alt="" referrerpolicy="no-referrer" />` : ''}
        <h1>⭐ Hello, ${u.name || u.email}</h1>
        <p>You're signed in as <strong>${u.email}</strong>.</p>
+       <ul style="list-style:none;padding:0">${deviceRows}</ul>
        <form method="POST" action="/logout"><button class="btn" type="submit">Sign out</button></form>
        <p class="muted">Deployed on Fly.io · authed with Google</p>`
     )
