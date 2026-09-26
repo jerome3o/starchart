@@ -54,6 +54,8 @@ object Notifications {
             .setContentTitle(title)
             .setContentText(text)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
             .setContentIntent(contentIntent)
             .build()
     }
