@@ -1,8 +1,12 @@
 package io.github.jerome3o.starchart
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.widget.Button
 import android.widget.LinearLayout
@@ -10,12 +14,17 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.google.android.material.materialswitch.MaterialSwitch
+import java.io.File
+import java.text.DateFormat
+import java.util.Date
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
@@ -27,6 +36,8 @@ class MainActivity : AppCompatActivity() {
         Goal("read_book", "Read for 20 minutes"),
     )
 
+    private lateinit var db: LocationDb
+
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (!granted) {
@@ -34,10 +45,33 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    private val requestLocationPermissions =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+            ) {
+                startLocationTracking()
+            } else {
+                findViewById<MaterialSwitch>(R.id.switch_location).isChecked = false
+                Toast.makeText(this, R.string.location_denied, Toast.LENGTH_LONG).show()
+            }
+        }
+
+    private val requestBackgroundLocation =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val message = if (granted) {
+                R.string.background_location_granted
+            } else {
+                R.string.background_location_denied
+            }
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        db = LocationDb(this)
         Notifications.ensureChannel(this)
         if (Build.VERSION.SDK_INT >= 33 && !Notifications.canNotify(this)) {
             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -46,11 +80,144 @@ class MainActivity : AppCompatActivity() {
         setUpGoalList()
         setUpNotificationButtons()
         setUpDailyReminderSwitch()
+        setUpOverlaySwitch()
+        setUpLocationTracking()
     }
+
+    override fun onResume() {
+        super.onResume()
+        findViewById<MaterialSwitch>(R.id.switch_overlay).isChecked = OverlayService.running
+        findViewById<MaterialSwitch>(R.id.switch_location).isChecked = LocationService.running
+        updateLocationStatus()
+    }
+
+    // --- Overlay -----------------------------------------------------------
+
+    private fun setUpOverlaySwitch() {
+        findViewById<MaterialSwitch>(R.id.switch_overlay).setOnCheckedChangeListener { switch, checked ->
+            if (checked) {
+                if (Settings.canDrawOverlays(this)) {
+                    ContextCompat.startForegroundService(
+                        this, Intent(this, OverlayService::class.java)
+                    )
+                } else {
+                    switch.isChecked = false
+                    Toast.makeText(this, R.string.overlay_permission_needed, Toast.LENGTH_LONG).show()
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName")
+                        )
+                    )
+                }
+            } else {
+                stopService(Intent(this, OverlayService::class.java))
+            }
+        }
+    }
+
+    // --- Location tracking -------------------------------------------------
+
+    private fun setUpLocationTracking() {
+        findViewById<MaterialSwitch>(R.id.switch_location).setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                if (hasLocationPermission()) {
+                    startLocationTracking()
+                } else {
+                    requestLocationPermissions.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                        )
+                    )
+                }
+            } else {
+                prefs().edit().putBoolean(KEY_TRACKING_ENABLED, false).apply()
+                stopService(Intent(this, LocationService::class.java))
+            }
+        }
+
+        findViewById<Button>(R.id.btn_export_locations).setOnClickListener { exportLocations() }
+
+        findViewById<Button>(R.id.btn_background_location).setOnClickListener {
+            when {
+                Build.VERSION.SDK_INT < 29 -> Toast.makeText(
+                    this, R.string.background_location_granted, Toast.LENGTH_SHORT
+                ).show()
+                !hasLocationPermission() -> Toast.makeText(
+                    this, R.string.background_location_needs_foreground, Toast.LENGTH_LONG
+                ).show()
+                else -> requestBackgroundLocation.launch(
+                    Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                )
+            }
+        }
+
+        findViewById<Button>(R.id.btn_battery_optimizations).setOnClickListener {
+            val powerManager = getSystemService(PowerManager::class.java)
+            if (powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                Toast.makeText(this, R.string.battery_already_exempt, Toast.LENGTH_SHORT).show()
+            } else {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            }
+        }
+    }
+
+    private fun startLocationTracking() {
+        prefs().edit().putBoolean(KEY_TRACKING_ENABLED, true).apply()
+        ContextCompat.startForegroundService(this, Intent(this, LocationService::class.java))
+        findViewById<MaterialSwitch>(R.id.switch_location).isChecked = true
+    }
+
+    private fun hasLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun updateLocationStatus() {
+        val status = findViewById<TextView>(R.id.location_status)
+        val latest = db.latest()
+        status.text = if (latest == null) {
+            getString(R.string.location_status_empty)
+        } else {
+            getString(
+                R.string.location_status,
+                db.count(),
+                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(latest.timeMs)),
+                latest.accuracyM.toInt()
+            )
+        }
+    }
+
+    private fun exportLocations() {
+        if (db.count() == 0L) {
+            Toast.makeText(this, R.string.export_empty, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val dir = File(cacheDir, "exports").apply { mkdirs() }
+        val file = File(dir, "starchart-locations.csv")
+        file.bufferedWriter().use { db.writeCsv(it) }
+
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/csv"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(send, getString(R.string.export_chooser_title)))
+    }
+
+    // --- Goals & notification tests (placeholder features) ------------------
 
     private fun setUpGoalList() {
         val container = findViewById<LinearLayout>(R.id.goal_container)
-        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val prefs = prefs()
         val inflater = LayoutInflater.from(this)
 
         goals.forEach { goal ->
@@ -107,7 +274,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setUpDailyReminderSwitch() {
-        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val prefs = prefs()
         val dailySwitch = findViewById<MaterialSwitch>(R.id.switch_daily_reminder)
         dailySwitch.isChecked = prefs.getBoolean(KEY_DAILY_REMINDER, false)
 
@@ -134,11 +301,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun prefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
+
     private data class Goal(val id: String, val name: String)
 
     companion object {
         private const val PREFS = "starchart"
         private const val KEY_DAILY_REMINDER = "daily_reminder"
+        private const val KEY_TRACKING_ENABLED = "tracking_enabled"
         private const val DAILY_REMINDER_WORK = "daily-reminder"
     }
 }

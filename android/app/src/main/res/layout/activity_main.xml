@@ -66,5 +66,69 @@
             android:layout_marginTop="16dp"
             android:text="@string/switch_daily_reminder" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/section_overlay"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switch_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/switch_overlay" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/overlay_hint"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/section_location"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switch_location"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/switch_location" />
+
+        <TextView
+            android:id="@+id/location_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+        <Button
+            android:id="@+id/btn_export_locations"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/btn_export_locations" />
+
+        <Button
+            android:id="@+id/btn_background_location"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/btn_background_location" />
+
+        <Button
+            android:id="@+id/btn_battery_optimizations"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/btn_battery_optimizations" />
+
     </LinearLayout>
 </ScrollView>

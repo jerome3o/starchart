@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 object Notifications {
 
     const val CHANNEL_ID = "reminders"
+    const val SERVICE_CHANNEL_ID = "services"
 
     fun ensureChannel(context: Context) {
         val channel = NotificationChannel(
@@ -26,6 +27,35 @@ object Notifications {
         }
         context.getSystemService(NotificationManager::class.java)
             .createNotificationChannel(channel)
+    }
+
+    fun ensureServiceChannel(context: Context) {
+        val channel = NotificationChannel(
+            SERVICE_CHANNEL_ID,
+            context.getString(R.string.channel_services),
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = context.getString(R.string.channel_services_description)
+        }
+        context.getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(channel)
+    }
+
+    fun serviceNotification(context: Context, title: String, text: String): android.app.Notification {
+        ensureServiceChannel(context)
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            0,
+            Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(context, SERVICE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_star_notification)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setOngoing(true)
+            .setContentIntent(contentIntent)
+            .build()
     }
 
     fun canNotify(context: Context): Boolean {

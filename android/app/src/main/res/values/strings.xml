@@ -22,4 +22,32 @@
     <string name="scheduled_notification_toast">Reminder scheduled — expect it in a minute or two</string>
     <string name="default_reminder_text">Time to check in on your goals ⭐</string>
     <string name="notifications_denied">Notifications are disabled — reminders won\'t appear. Enable them in system settings.</string>
+
+    <string name="section_overlay">Screen overlay</string>
+    <string name="switch_overlay">Tilt-ball overlay</string>
+    <string name="overlay_hint">Draws a ball over every app; tilt the phone to roll it. Touches pass through.</string>
+    <string name="overlay_permission_needed">Allow “Display over other apps” for Starchart, then toggle again.</string>
+    <string name="overlay_notification_title">Tilt-ball overlay running</string>
+    <string name="overlay_notification_text">Toggle it off in the app.</string>
+
+    <string name="section_location">Location tracking</string>
+    <string name="switch_location">Track location (~every minute)</string>
+    <string name="location_status_empty">No fixes stored yet.</string>
+    <string name="location_status">%1$d fixes stored · last at %2$s (±%3$d m)</string>
+    <string name="location_denied">Location permission denied — tracking can\'t start.</string>
+    <string name="btn_export_locations">Export locations as CSV</string>
+    <string name="export_chooser_title">Share location CSV</string>
+    <string name="export_empty">Nothing to export yet.</string>
+    <string name="btn_background_location">Allow all-the-time location (auto-restart after reboot)</string>
+    <string name="background_location_granted">Background location granted — tracking will survive reboots.</string>
+    <string name="background_location_denied">Without “Allow all the time”, tracking won\'t auto-restart after a reboot.</string>
+    <string name="background_location_needs_foreground">Enable location tracking first, then grant all-the-time access.</string>
+    <string name="btn_battery_optimizations">Exempt from battery optimization (more reliable)</string>
+    <string name="battery_already_exempt">Already exempt from battery optimization.</string>
+    <string name="location_notification_title">Location tracking on</string>
+    <string name="location_notification_starting">Waiting for first fix…</string>
+    <string name="location_notification_status">%1$d fixes · last at %2$s</string>
+
+    <string name="channel_services">Background services</string>
+    <string name="channel_services_description">Persistent notifications while the overlay or location tracking runs</string>
 </resources>
