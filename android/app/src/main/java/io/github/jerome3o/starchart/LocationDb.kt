@@ -4,6 +4,9 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 class LocationDb(context: Context) :
     SQLiteOpenHelper(context.applicationContext, "locations.db", null, 1) {
@@ -73,6 +76,36 @@ class LocationDb(context: Context) :
                 }
             }
         }
+
+    fun fixesBetween(fromMs: Long, toMs: Long): List<StoredFix> =
+        readableDatabase.rawQuery(
+            "SELECT id, time, lat, lon, accuracy FROM fixes WHERE time >= ? AND time < ? ORDER BY time ASC",
+            arrayOf(fromMs.toString(), toMs.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        StoredFix(
+                            cursor.getLong(0), cursor.getLong(1),
+                            cursor.getDouble(2), cursor.getDouble(3), cursor.getFloat(4)
+                        )
+                    )
+                }
+            }
+        }
+
+    /** Calendar days (in [zone], using its current offset) that have at least one fix. */
+    fun daysWithFixes(zone: ZoneId): List<LocalDate> {
+        val offsetSeconds = zone.rules.getOffset(Instant.now()).totalSeconds
+        return readableDatabase.rawQuery(
+            "SELECT DISTINCT date((time / 1000) + ?, 'unixepoch') AS day FROM fixes ORDER BY day ASC",
+            arrayOf(offsetSeconds.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(LocalDate.parse(cursor.getString(0)))
+            }
+        }
+    }
 
     fun writeCsv(appendable: Appendable) {
         appendable.append("time_utc_ms,lat,lon,accuracy_m\n")

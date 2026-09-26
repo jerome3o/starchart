@@ -108,31 +108,6 @@ function fixCount(deviceId) {
   return db.prepare('SELECT COUNT(*) AS c FROM fixes WHERE device_id = ?').get(deviceId).c;
 }
 
-// All of a user's fixes (across devices) in [fromMs, toMs), oldest first.
-function fixesBetween(email, fromMs, toMs, limit = 20000) {
-  return db
-    .prepare(
-      `SELECT f.device_id AS deviceId, d.label, f.time, f.lat, f.lon, f.accuracy
-       FROM fixes f JOIN devices d ON d.id = f.device_id
-       WHERE d.email = ? AND f.time >= ? AND f.time < ?
-       ORDER BY f.time ASC LIMIT ?`
-    )
-    .all(email.toLowerCase(), fromMs, toMs, limit);
-}
-
-// Calendar days (in the viewer's timezone, given as minutes behind UTC like
-// JS getTimezoneOffset) that have at least one fix, with counts.
-function daysWithFixes(email, offsetMinutes) {
-  return db
-    .prepare(
-      `SELECT date((f.time / 1000) - ?, 'unixepoch') AS day, COUNT(*) AS count
-       FROM fixes f JOIN devices d ON d.id = f.device_id
-       WHERE d.email = ?
-       GROUP BY day ORDER BY day ASC`
-    )
-    .all(offsetMinutes * 60, email.toLowerCase());
-}
-
 module.exports = {
   createDevice,
   deviceForToken,
@@ -141,6 +116,4 @@ module.exports = {
   setDeviceError,
   insertFixes,
   fixCount,
-  fixesBetween,
-  daysWithFixes,
 };

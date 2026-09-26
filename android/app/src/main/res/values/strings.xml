@@ -4,6 +4,18 @@
     <string name="app_title">Starchart ⭐</string>
     <string name="app_subtitle">Placeholder build — testing install, launch, and notifications.</string>
 
+    <string name="section_permissions">Permissions &amp; reliability</string>
+    <string name="permissions_hint">Everything the app needs to run reliably. Tap a row to grant it.</string>
+    <string name="perm_notifications">Notifications</string>
+    <string name="perm_location">Location (while using)</string>
+    <string name="perm_background_location">Location all the time (auto-restart after reboot/update)</string>
+    <string name="perm_overlay">Display over other apps</string>
+    <string name="perm_battery">Battery optimization exemption</string>
+    <string name="perm_exact_alarms">Exact alarms</string>
+    <string name="perm_granted_prefix">✅ %1$s</string>
+    <string name="perm_missing_prefix">⚠️ %1$s — tap to grant</string>
+    <string name="perm_already_granted">Already granted.</string>
+
     <string name="section_goals">Goals</string>
     <string name="section_notifications">Notifications</string>
 
@@ -38,15 +50,20 @@
     <string name="btn_export_locations">Export locations as CSV</string>
     <string name="export_chooser_title">Share location CSV</string>
     <string name="export_empty">Nothing to export yet.</string>
-    <string name="btn_background_location">Allow all-the-time location (auto-restart after reboot)</string>
     <string name="background_location_granted">Background location granted — tracking will survive reboots.</string>
     <string name="background_location_denied">Without “Allow all the time”, tracking won\'t auto-restart after a reboot.</string>
     <string name="background_location_needs_foreground">Enable location tracking first, then grant all-the-time access.</string>
-    <string name="btn_battery_optimizations">Exempt from battery optimization (more reliable)</string>
-    <string name="battery_already_exempt">Already exempt from battery optimization.</string>
     <string name="location_notification_title">Location tracking on</string>
     <string name="location_notification_starting">Waiting for first fix…</string>
     <string name="location_notification_status">%1$d fixes · last at %2$s</string>
+
+    <string name="btn_explore_map">Explore map</string>
+    <string name="map_title">Explorer</string>
+    <string name="btn_prev_day">‹</string>
+    <string name="btn_next_day">›</string>
+    <string name="map_no_fixes">No fixes on this day.</string>
+    <string name="map_stats">%1$d fixes · %2$.1f km · %3$s–%4$s</string>
+    <string name="map_point_info">%1$s · ±%2$d m</string>
 
     <string name="section_sync">Server sync</string>
     <string name="sync_status_unlinked">Not linked — location data stays on this phone only.</string>
