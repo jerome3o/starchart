@@ -22,8 +22,7 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
             intent.action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) return
-        val prefs = context.getSharedPreferences("starchart", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("tracking_enabled", false)) return
+        if (!Prefs.get(context).getBoolean(Prefs.KEY_TRACKING_ENABLED, false)) return
 
         val hasBackgroundLocation = Build.VERSION.SDK_INT < 29 ||
             ContextCompat.checkSelfPermission(

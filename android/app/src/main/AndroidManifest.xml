@@ -43,12 +43,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".MapActivity"
-            android:exported="false"
-            android:label="@string/map_title"
-            android:parentActivityName=".MainActivity" />
-
         <service
             android:name=".OverlayService"
             android:exported="false"

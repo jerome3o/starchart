@@ -21,6 +21,10 @@ panel that shows every permission the app wants with tap-to-grant rows.
 Tracking auto-resumes when the app is opened and, with all-the-time location,
 after reboots and updates.
 
+The app is three bottom tabs: **Star chart** (goals), **Map** (explorer) and
+**Settings** (map style, permissions, tracking, sync, notification tests,
+overlay). Each tab is a Fragment hosted by `MainActivity`.
+
 ### Installing via Obtainium
 
 1. In Obtainium: **Add App**, and use this repo's URL:
