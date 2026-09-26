@@ -49,35 +49,7 @@ class GoalsWidgetProvider : AppWidgetProvider() {
         WorkManager.getInstance(context).cancelUniqueWork(REFRESH_WORK)
     }
 
-    override fun onReceive(context: Context, intent: Intent) {
-        super.onReceive(context, intent)
-        if (intent.action != ACTION_LOG) return
-        val goalId = intent.getLongExtra(EXTRA_GOAL_ID, -1)
-        if (goalId < 0) return
-
-        // Optimistic: bump the cached count so the widget updates instantly.
-        GoalsApi.cached(context)?.let { snap ->
-            snap.goals.find { it.id == goalId }?.let { g ->
-                val bumped = g.copy(
-                    count = g.count + 1,
-                    status = if (g.count + 1 < g.targetByNow) "behind" else "on_track",
-                )
-                GoalsApi.saveCache(context, snap.withGoal(bumped))
-            }
-        }
-        refresh(context)
-
-        WorkManager.getInstance(context).enqueue(
-            OneTimeWorkRequestBuilder<WidgetLogWorker>()
-                .setConstraints(networkConstraint())
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-                .setInputData(workDataOf(EXTRA_GOAL_ID to goalId, KEY_CLIENT_ID to UUID.randomUUID().toString()))
-                .build()
-        )
-    }
-
     companion object {
-        const val ACTION_LOG = "io.github.jerome3o.starchart.widget.LOG"
         const val EXTRA_GOAL_ID = "goal_id"
         const val KEY_CLIENT_ID = "client_id"
         private const val REFRESH_WORK = "widget-refresh"
@@ -91,6 +63,30 @@ class GoalsWidgetProvider : AppWidgetProvider() {
                 ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<WidgetRefreshWorker>(30, TimeUnit.MINUTES)
                     .setConstraints(networkConstraint())
+                    .build()
+            )
+        }
+
+        /**
+         * Logs a completion tapped on the widget: bumps the cached count so the
+         * widget updates instantly, then a worker posts it (idempotent client
+         * id, retried until the server has it).
+         */
+        fun logFromWidget(context: Context, goalId: Long) {
+            GoalsApi.cached(context)?.let { snap ->
+                snap.goals.find { it.id == goalId }?.let { g ->
+                    val bumped = g.copy(
+                        count = g.count + 1,
+                        status = if (g.count + 1 < g.targetByNow) "behind" else "on_track",
+                    )
+                    GoalsApi.saveCache(context, snap.withGoal(bumped))
+                }
+            }
+            WorkManager.getInstance(context).enqueue(
+                OneTimeWorkRequestBuilder<WidgetLogWorker>()
+                    .setConstraints(networkConstraint())
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                    .setInputData(workDataOf(EXTRA_GOAL_ID to goalId, KEY_CLIENT_ID to UUID.randomUUID().toString()))
                     .build()
             )
         }
@@ -133,13 +129,15 @@ class GoalsWidgetProvider : AppWidgetProvider() {
             views.setRemoteAdapter(R.id.widget_list, serviceIntent)
             views.setEmptyView(R.id.widget_list, R.id.widget_empty)
 
-            // "+" buttons fill in the goal id on this template.
-            val logTemplate = PendingIntent.getBroadcast(
+            // Rows and "+" buttons fill in the goal id and mode on this template;
+            // the transparent activity plays the charge/celebration over the home screen.
+            val actionTemplate = PendingIntent.getActivity(
                 context, 0,
-                Intent(context, GoalsWidgetProvider::class.java).setAction(ACTION_LOG),
+                Intent(context, WidgetActionActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
             )
-            views.setPendingIntentTemplate(R.id.widget_list, logTemplate)
+            views.setPendingIntentTemplate(R.id.widget_list, actionTemplate)
 
             val open = PendingIntent.getActivity(
                 context, 0,
@@ -191,7 +189,15 @@ class GoalsWidgetService : RemoteViewsService() {
 
             views.setOnClickFillInIntent(
                 R.id.widget_goal_plus,
-                Intent().putExtra(GoalsWidgetProvider.EXTRA_GOAL_ID, g.id),
+                Intent()
+                    .putExtra(GoalsWidgetProvider.EXTRA_GOAL_ID, g.id)
+                    .putExtra(WidgetActionActivity.EXTRA_MODE, WidgetActionActivity.MODE_LOG),
+            )
+            views.setOnClickFillInIntent(
+                R.id.widget_goal_row,
+                Intent()
+                    .putExtra(GoalsWidgetProvider.EXTRA_GOAL_ID, g.id)
+                    .putExtra(WidgetActionActivity.EXTRA_MODE, WidgetActionActivity.MODE_CHARGE),
             )
             return views
         }
