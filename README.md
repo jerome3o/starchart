@@ -91,8 +91,8 @@ Already set up for you:
    ```
 2. ⬜ **Add the two remaining secrets** from that client:
    ```sh
-   gh secret set GOOGLE_CLIENT_ID     --repo jerome3o/starchart   # paste Client ID
-   gh secret set GOOGLE_CLIENT_SECRET --repo jerome3o/starchart   # paste Client secret
+   gh secret set GOOGLE_OAUTH_CLIENT_ID     --repo jerome3o/starchart   # paste Client ID
+   gh secret set GOOGLE_OAUTH_CLIENT_SECRET --repo jerome3o/starchart   # paste Client secret
    ```
 3. ⬜ **Trigger a deploy** — push any commit to `main`, or run
    `gh workflow run "Deploy to Fly.io" --repo jerome3o/starchart`.
@@ -112,15 +112,15 @@ Then visit <https://starchart.fly.dev> and sign in. Only emails in `ALLOWED_EMAI
 | Name | Where | What |
 |------|-------|------|
 | `FLY_API_TOKEN` | GH Actions | Fly deploy token (app-scoped) |
-| `GOOGLE_CLIENT_ID` | GH Actions | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | GH Actions | Google OAuth client secret |
+| `GOOGLE_OAUTH_CLIENT_ID` | GH Actions | Google OAuth client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | GH Actions | Google OAuth client secret |
 | `SESSION_SECRET` | GH Actions | Cookie-signing secret |
 | `ALLOWED_EMAILS` | GH Actions | Comma-separated login allow-list |
 
 Set/rotate a secret:
 
 ```sh
-gh secret set GOOGLE_CLIENT_SECRET   # paste value when prompted
+gh secret set GOOGLE_OAUTH_CLIENT_SECRET   # paste value when prompted
 ```
 
 ## Google OAuth client setup (one-time, manual)
