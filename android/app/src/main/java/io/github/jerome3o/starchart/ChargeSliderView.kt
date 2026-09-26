@@ -191,8 +191,12 @@ class ChargeSliderView @JvmOverloads constructor(
             notchesPassed = passed
         }
         if (p >= 1f && !completed) {
+            // The end is the payoff: complete, drop the gesture and spring back.
             completed = true
+            dragging = false
+            parent?.requestDisallowInterceptTouchEvent(false)
             listener?.onChargeComplete()
+            animateBack()
         }
         invalidate()
     }
