@@ -68,8 +68,40 @@ object GoalsApi {
     fun fetch(context: Context): Snapshot {
         val tz = ZoneId.systemDefault().id
         val json = Sync.call(context, "GET", "/api/goals?tz=${android.net.Uri.encode(tz)}")
-        try { Prefs.get(context).edit().putString(Prefs.KEY_GOALS_CACHE, json.toString()).apply() } catch (_: Exception) {}
-        return parseSnapshot(json)
+        val snapshot = parseSnapshot(json)
+        saveCache(context, snapshot)
+        return snapshot
+    }
+
+    /** Persists the snapshot (read by the widget) and refreshes any widgets. */
+    fun saveCache(context: Context, snapshot: Snapshot) {
+        try {
+            Prefs.get(context).edit().putString(Prefs.KEY_GOALS_CACHE, toJson(snapshot).toString()).commit()
+        } catch (_: Exception) {}
+        GoalsWidgetProvider.refresh(context)
+    }
+
+    private fun cacheGoal(context: Context, goal: Goal): Goal {
+        cached(context)?.let { saveCache(context, it.withGoal(goal)) }
+        return goal
+    }
+
+    private fun toJson(s: Snapshot): JSONObject {
+        val periods = JSONObject()
+        for ((days, p) in s.periods) {
+            periods.put(days.toString(), JSONObject()
+                .put("periodDays", p.days).put("dayOfPeriod", p.dayOfPeriod).put("fraction", p.fraction)
+                .put("startDate", p.startDate).put("endDate", p.endDate))
+        }
+        val goals = org.json.JSONArray()
+        for (g in s.goals) {
+            goals.put(JSONObject()
+                .put("id", g.id).put("name", g.name).put("emoji", g.emoji ?: JSONObject.NULL)
+                .put("target", g.target).put("period_days", g.periodDays).put("hours_offset", g.hoursOffset)
+                .put("count", g.count).put("target_by_now", g.targetByNow).put("status", g.status)
+                .put("days_left", g.daysLeft).put("period_start", g.periodStart).put("period_end", g.periodEnd))
+        }
+        return JSONObject().put("timezone", s.timezone).put("periods", periods).put("goals", goals)
     }
 
     fun cached(context: Context): Snapshot? =
@@ -81,22 +113,26 @@ object GoalsApi {
         parseGoal(Sync.call(context, "POST", "/api/goals", goalBody(name, emoji, target, periodDays, hoursOffset)))
 
     fun update(context: Context, id: Long, name: String, emoji: String?, target: Double, periodDays: Int, hoursOffset: Double): Goal =
-        parseGoal(Sync.call(context, "POST", "/api/goals/$id", goalBody(name, emoji, target, periodDays, hoursOffset)))
+        cacheGoal(context, parseGoal(Sync.call(context, "POST", "/api/goals/$id", goalBody(name, emoji, target, periodDays, hoursOffset))))
 
     fun archive(context: Context, id: Long) {
         Sync.call(context, "POST", "/api/goals/$id", JSONObject().put("archived", true))
     }
 
-    fun logCompletion(context: Context, id: Long): Goal =
-        parseGoal(
-            Sync.call(
-                context, "POST", "/api/goals/$id/completions",
-                JSONObject().put("client_id", UUID.randomUUID().toString())
+    /** [clientId] makes retries idempotent; pass the same one for the same tap. */
+    fun logCompletion(context: Context, id: Long, clientId: String? = null): Goal =
+        cacheGoal(
+            context,
+            parseGoal(
+                Sync.call(
+                    context, "POST", "/api/goals/$id/completions",
+                    JSONObject().put("client_id", clientId ?: UUID.randomUUID().toString())
+                )
             )
         )
 
     fun undo(context: Context, id: Long): Goal =
-        parseGoal(Sync.call(context, "POST", "/api/goals/$id/undo"))
+        cacheGoal(context, parseGoal(Sync.call(context, "POST", "/api/goals/$id/undo")))
 
     private fun goalBody(name: String, emoji: String?, target: Double, periodDays: Int, hoursOffset: Double) =
         JSONObject()
