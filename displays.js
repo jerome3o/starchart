@@ -18,6 +18,11 @@ function base64url(buf) {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+// Log lines mention only the tail of the MAC; Actions log output is public.
+function macTail(mac) {
+  return mac ? mac.slice(-5) : '?';
+}
+
 function normalizeMac(raw) {
   const mac = String(raw || '').trim().toUpperCase().replace(/[^0-9A-F]/g, '');
   return mac.length === 12 ? mac.match(/.{2}/g).join(':') : null;
@@ -60,6 +65,7 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
       return res.status(403).json({ status: 403, message: 'display revoked' });
     }
     const key = db.claimPendingKey(mac);
+    console.log(`[display] setup ${display.friendly_id} (…${macTail(mac)}) fw=${req.get('FW-Version') || '?'} status=${display.status} -> ${key ? 'key issued' : 'pending approval'}`);
     if (key) {
       return res.json({
         status: 200,
@@ -86,6 +92,7 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
       // A device with a key from a previous server: surface it for approval,
       // which will adopt the key it presented.
       const mac = normalizeMac(req.get('ID'));
+      console.log(`[display] display unknown key (…${macTail(mac)}) fw=${req.get('FW-Version') || '?'} key=${key ? 'present' : 'missing'}`);
       if (mac && key && String(key).length >= 8) {
         const pending = db.recordPresentedKey(mac, db.hashToken(String(key)), req.get('FW-Version'));
         return res.status(401).json({
@@ -100,6 +107,7 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
       fwVersion: req.get('FW-Version'),
       rssi: req.get('RSSI') ? Number(req.get('RSSI')) : null,
     });
+    console.log(`[display] display ${display.friendly_id} ok battery=${req.get('Battery-Voltage') || '?'} rssi=${req.get('RSSI') || '?'}`);
     res.json({
       status: 0,
       image_url: `${issuer}/display-image/${imageToken(display.id)}.png`,
@@ -133,6 +141,7 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
     if (!row || row.status !== 'active' || !row.email) return res.status(404).end();
     res.set('Content-Type', 'image/png');
     res.set('Cache-Control', 'no-store');
+    console.log(`[display] image ${row.friendly_id}`);
     res.send(render.renderDashboardPng(row.email));
   });
 
