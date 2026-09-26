@@ -8,7 +8,6 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -17,8 +16,6 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import java.text.DateFormat
-import java.util.Date
 import java.util.concurrent.Executors
 
 /**
@@ -44,7 +41,6 @@ class LocationService : Service() {
                     )
                 )
             }
-            result.lastLocation?.let { updateNotification(it.time) }
             pushToServer()
         }
     }
@@ -71,7 +67,7 @@ class LocationService : Service() {
             Notifications.serviceNotification(
                 this,
                 getString(R.string.location_notification_title),
-                getString(R.string.location_notification_starting)
+                getString(R.string.location_notification_text)
             ),
             if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
         )
@@ -113,27 +109,6 @@ class LocationService : Service() {
             PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
-
-    private fun updateNotification(lastFixTimeMs: Long) {
-        if (!Notifications.canNotify(this)) return
-        val text = getString(
-            R.string.location_notification_status,
-            db.count(),
-            DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(lastFixTimeMs))
-        )
-        try {
-            NotificationManagerCompat.from(this).notify(
-                NOTIFICATION_ID,
-                Notifications.serviceNotification(
-                    this,
-                    getString(R.string.location_notification_title),
-                    text
-                )
-            )
-        } catch (_: SecurityException) {
-            // Notification permission revoked mid-flight; tracking continues.
-        }
-    }
 
     companion object {
         private const val NOTIFICATION_ID = 101

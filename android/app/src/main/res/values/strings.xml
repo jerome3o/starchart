@@ -80,8 +80,7 @@
     <string name="background_location_denied">Without “Allow all the time”, tracking won\'t auto-restart after a reboot.</string>
     <string name="background_location_needs_foreground">Enable location tracking first, then grant all-the-time access.</string>
     <string name="location_notification_title">Location tracking on</string>
-    <string name="location_notification_starting">Waiting for first fix…</string>
-    <string name="location_notification_status">%1$d fixes · last at %2$s</string>
+    <string name="location_notification_text">Recording a fix about every minute.</string>
 
     <string name="nav_starchart">Star chart</string>
     <string name="nav_map">Map</string>
