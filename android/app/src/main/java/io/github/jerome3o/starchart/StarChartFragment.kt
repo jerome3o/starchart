@@ -262,13 +262,15 @@ class StarChartFragment : Fragment() {
         override fun onChargeComplete() {
             haptics.celebrate()
             sound.chime()
+            sound.stop()
+            stopShake()
+            activity?.findViewById<ViewGroup>(android.R.id.content)?.let { CelebrationView.show(it) }
+            logCompletion(goal)
         }
 
         override fun onChargeRelease(completed: Boolean) {
             sound.stop()
             stopShake()
-            // Log on release, so the list isn't re-rendered under a moving finger.
-            if (completed) logCompletion(goal)
         }
     }
 
