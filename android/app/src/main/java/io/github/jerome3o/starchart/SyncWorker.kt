@@ -14,38 +14,19 @@ import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
 
 /**
- * Uploads unsynced fixes to the server in batches. Runs hourly while the
- * device is linked, plus on demand from the "Sync now" button.
+ * Catch-up upload of unsynced fixes. LocationService pushes new fixes as
+ * they arrive; this runs hourly (and on "Sync now") to pick up anything
+ * that failed, e.g. fixes recorded while offline.
  */
 class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
 
-    override fun doWork(): Result {
-        val context = applicationContext
-        val token = Sync.token(context) ?: return Result.success()
-        val db = LocationDb(context)
-
-        try {
-            while (true) {
-                val batch = db.fixesAfter(Sync.lastSyncedId(context), BATCH_SIZE)
-                if (batch.isEmpty()) break
-                val accepted = Sync.uploadFixes(token, batch)
-                Sync.recordProgress(context, batch.last().id, accepted)
-            }
-        } catch (e: Sync.UnauthorizedException) {
-            // Token revoked server-side; unlink so the UI says so.
-            Sync.unlink(context)
-            Sync.recordError(context, "server rejected this device's token — unlinked")
-            return Result.failure()
-        } catch (e: Exception) {
-            Sync.recordError(context, "${e.javaClass.simpleName}: ${e.message ?: "unknown error"}")
-            return Result.retry()
-        }
-        Sync.recordSuccess(context)
-        return Result.success()
+    override fun doWork(): Result = when (Sync.uploadPending(applicationContext)) {
+        Sync.Outcome.OK -> Result.success()
+        Sync.Outcome.UNAUTHORIZED -> Result.failure()
+        Sync.Outcome.FAILED -> Result.retry()
     }
 
     companion object {
-        private const val BATCH_SIZE = 500
         private const val PERIODIC_WORK = "sync-fixes"
         const val SYNC_NOW_WORK = "sync-now"
 

@@ -19,6 +19,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import java.text.DateFormat
 import java.util.Date
+import java.util.concurrent.Executors
 
 /**
  * Foreground service that records a location fix roughly every minute into
@@ -44,7 +45,17 @@ class LocationService : Service() {
                 )
             }
             result.lastLocation?.let { updateNotification(it.time) }
+            pushToServer()
         }
+    }
+
+    // Uploads run one at a time on this thread; failures are left for the
+    // hourly SyncWorker catch-up.
+    private val uploader = Executors.newSingleThreadExecutor()
+
+    private fun pushToServer() {
+        if (!Sync.isLinked(this) || !Sync.hasNetwork(this)) return
+        uploader.execute { Sync.uploadPending(this) }
     }
 
     override fun onCreate() {
@@ -90,6 +101,7 @@ class LocationService : Service() {
 
     override fun onDestroy() {
         fused.removeLocationUpdates(callback)
+        uploader.shutdown()
         running = false
         super.onDestroy()
     }

@@ -1,6 +1,8 @@
 package io.github.jerome3o.starchart
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -66,6 +68,45 @@ object Sync {
     fun lastError(context: Context): String? = prefs(context).getString(KEY_LAST_ERROR, null)
 
     class UnauthorizedException : IOException("server rejected the device token")
+
+    enum class Outcome { OK, UNAUTHORIZED, FAILED }
+
+    fun hasNetwork(context: Context): Boolean {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    /**
+     * Uploads every fix not yet on the server, in batches, recording progress
+     * after each accepted batch. Safe to call from any background thread;
+     * callers serialise it themselves.
+     */
+    fun uploadPending(context: Context): Outcome {
+        val token = token(context) ?: return Outcome.OK
+        val db = LocationDb(context)
+        return try {
+            while (true) {
+                val batch = db.fixesAfter(lastSyncedId(context), BATCH_SIZE)
+                if (batch.isEmpty()) break
+                val accepted = uploadFixes(token, batch)
+                recordProgress(context, batch.last().id, accepted)
+            }
+            recordSuccess(context)
+            Outcome.OK
+        } catch (e: UnauthorizedException) {
+            // Token revoked server-side; unlink so the UI says so.
+            unlink(context)
+            recordError(context, "server rejected this device's token — unlinked")
+            Outcome.UNAUTHORIZED
+        } catch (e: Exception) {
+            recordError(context, "${e.javaClass.simpleName}: ${e.message ?: "unknown error"}")
+            Outcome.FAILED
+        }
+    }
+
+    private const val BATCH_SIZE = 500
 
     /** Uploads a batch of fixes; returns the number the server newly accepted. */
     fun uploadFixes(token: String, fixes: List<LocationDb.StoredFix>): Int {
