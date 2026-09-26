@@ -289,8 +289,11 @@ app.get('/', requireAuth, (req, res) => {
     ? displays
         .map((d) => {
           if (d.status === 'pending') {
+            const how = d.presented_key_hash
+              ? 'arrived with a key from a previous server (approving adopts it)'
+              : 'asked to be set up';
             return `<li style="text-align:left;margin:.5rem 0;">
-              <strong>New device ${esc(d.friendly_id)}</strong> (${esc(d.mac)}) asked to be set up ${fmt(d.created_at)}
+              <strong>New device ${esc(d.friendly_id)}</strong> (${esc(d.mac)}) ${how} ${fmt(d.created_at)}
               <form method="POST" action="/displays/${d.id}/approve" style="display:inline">
                 <input name="label" placeholder="Label" maxlength="60" style="padding:.15rem .4rem;border-radius:6px;border:1px solid #2c365a;background:#1f2740;color:#e6e9f0" />
                 <button class="btn" style="${smallBtn};background:#2f7a4b" type="submit">Approve</button>
@@ -303,7 +306,9 @@ app.get('/', requireAuth, (req, res) => {
           if (d.status !== 'active') return '';
           const battery = d.battery_voltage ? ` · ${d.battery_voltage.toFixed(2)} V` : '';
           const resetup = d.setup_requested_at
-            ? `<br /><span style="color:#ffcf6b">Asked to be set up again ${fmt(d.setup_requested_at)} — approving issues a new key.</span>
+            ? `<br /><span style="color:#ffcf6b">${d.presented_key_hash
+                ? `Presented a different key ${fmt(d.setup_requested_at)} — approving adopts it.`
+                : `Asked to be set up again ${fmt(d.setup_requested_at)} — approving issues a new key.`}</span>
                <form method="POST" action="/displays/${d.id}/approve" style="display:inline">
                  <button class="btn" style="${smallBtn};background:#2f7a4b" type="submit">Approve re-setup</button>
                </form>`
