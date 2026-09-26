@@ -7,6 +7,7 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const { z } = require('zod');
 const db = require('./db');
+const goals = require('./goals');
 
 const MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
 
@@ -81,8 +82,98 @@ function downsample(rows, max) {
 const json = (value) => ({ content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] });
 const error = (message) => ({ content: [{ type: 'text', text: message }], isError: true });
 
-function buildServer(email) {
-  const server = new McpServer({ name: 'starchart', version: '1.0.0' });
+function registerGoalTools(server, email, canWrite) {
+  const resolveGoal = (goalId, goalName) => {
+    const all = db.listGoals(email);
+    if (goalId !== undefined) return all.find((g) => g.id === goalId) || null;
+    if (goalName) {
+      const needle = goalName.trim().toLowerCase();
+      return all.find((g) => g.name.toLowerCase() === needle) ||
+        all.find((g) => g.name.toLowerCase().includes(needle)) || null;
+    }
+    return null;
+  };
+
+  server.registerTool(
+    'list_goals',
+    {
+      title: 'List goals',
+      description: "The user's habit goals with progress for the current period: count so far, target, expected-by-now pace, on_track/behind status, and days left.",
+      inputSchema: {},
+    },
+    async () => json(goals.goalsWithProgress(email))
+  );
+
+  if (!canWrite) return;
+
+  server.registerTool(
+    'log_completion',
+    {
+      title: 'Log a goal completion',
+      description: 'Record that the user did a goal once (e.g. went to the gym). Identify the goal by id or name.',
+      inputSchema: {
+        goal_id: z.number().int().optional(),
+        goal_name: z.string().optional().describe('Case-insensitive; partial match allowed'),
+        note: z.string().max(200).optional(),
+      },
+    },
+    async ({ goal_id, goal_name, note }) => {
+      const goal = resolveGoal(goal_id, goal_name);
+      if (!goal) return error('No matching goal. Use list_goals to see them.');
+      const result = goals.logCompletion(email, goal.id, { source: 'mcp', note });
+      return json({ logged: true, goal: result.goal });
+    }
+  );
+
+  server.registerTool(
+    'undo_completion',
+    {
+      title: 'Undo a goal completion',
+      description: "Remove the most recent completion of a goal in the current period (e.g. it was logged by mistake).",
+      inputSchema: {
+        goal_id: z.number().int().optional(),
+        goal_name: z.string().optional(),
+      },
+    },
+    async ({ goal_id, goal_name }) => {
+      const goal = resolveGoal(goal_id, goal_name);
+      if (!goal) return error('No matching goal. Use list_goals to see them.');
+      const result = goals.undoCompletion(email, goal.id);
+      return json({ removed: Boolean(result.removed), goal: result.goal });
+    }
+  );
+
+  server.registerTool(
+    'create_goal',
+    {
+      title: 'Create a goal',
+      description: 'Add a new habit goal with a target number of completions per period (14 days by default, or 7).',
+      inputSchema: {
+        name: z.string().min(1).max(60),
+        emoji: z.string().max(4).optional(),
+        target: z.number().positive().max(500).describe('Completions per period'),
+        period_days: z.number().int().optional().describe('7 or 14 (default 14)'),
+        hours_offset: z.number().min(0).max(48).optional().describe('Grace hours before each day counts'),
+      },
+    },
+    async (input) => {
+      const { fields, errors } = goals.validateGoalInput(input);
+      if (errors.length) return error(errors.join('; '));
+      const goal = db.createGoal(email, {
+        name: fields.name, emoji: fields.emoji, target: fields.target,
+        periodDays: fields.period_days, hoursOffset: fields.hours_offset,
+      });
+      return json({ created: true, goal: goals.progressForGoal(email, goal.id) });
+    }
+  );
+}
+
+function buildServer(email, scopes) {
+  const server = new McpServer({ name: 'starchart', version: '1.1.0' });
+  const has = (s) => scopes.includes(s);
+
+  if (has('goals:read')) registerGoalTools(server, email, has('goals:write'));
+  if (!has('location:read')) return server;
 
   server.registerTool(
     'get_latest_location',
@@ -212,7 +303,7 @@ function buildServer(email) {
 // One server + transport per request: stateless, nothing to leak between
 // users, and it scales to zero with the Fly machine.
 async function handleMcpRequest(req, res) {
-  const server = buildServer(req.grant.email);
+  const server = buildServer(req.grant.email, req.grant.scope.split(' '));
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => {
     transport.close();

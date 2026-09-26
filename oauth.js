@@ -13,6 +13,8 @@ const createLimiter = require('./ratelimit');
 
 const SCOPES = {
   'location:read': 'Read your location history',
+  'goals:read': 'See your goals and progress',
+  'goals:write': 'Log, undo and create goals',
 };
 const ALL_SCOPES = Object.keys(SCOPES).join(' ');
 

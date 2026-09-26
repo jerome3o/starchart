@@ -7,6 +7,7 @@ const db = require('./db');
 const api = require('./api');
 const { createOAuthRouter } = require('./oauth');
 const { handleMcpRequest } = require('./mcp');
+const { createDisplayRouter } = require('./displays');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -220,22 +221,31 @@ app.post('/devices/:id/revoke', requireAuth, express.urlencoded({ extended: fals
   res.redirect('/');
 });
 
+const issuer = (BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+
+// The TRMNL protocol fixes the device paths under /api, so its router goes
+// before the bearer-guarded phone API.
+app.use(createDisplayRouter({
+  issuer, secret: SESSION_SECRET || 'dev-insecure-secret-change-me', requireAuth, page,
+}));
+
 app.use('/api', api);
 
 // --- MCP server for Claude.ai and other OAuth-capable MCP clients -----------
 
-const issuer = (BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const oauth = createOAuthRouter({ issuer, requireAuth, page });
 app.use(oauth.router);
 db.purgeExpiredOAuth();
 
-app.post('/mcp', oauth.requireBearer('location:read'), express.json({ limit: '1mb' }), (req, res, next) => {
+// Any valid grant may connect; each tool is offered only if its scope was granted.
+app.post('/mcp', oauth.requireBearer(null), express.json({ limit: '1mb' }), (req, res, next) => {
   handleMcpRequest(req, res).catch(next);
 });
 app.all('/mcp', (_req, res) => {
   res.set('Allow', 'POST');
   res.status(405).json({ error: 'method_not_allowed' });
 });
+
 
 app.get('/', requireAuth, (req, res) => {
   const u = req.session.user;
@@ -272,6 +282,46 @@ app.get('/', requireAuth, (req, res) => {
         )
         .join('')
     : `<li>None. MCP endpoint: <code>${issuer}/mcp</code></li>`;
+  const esc = (s) => String(s ?? '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+  const smallBtn = 'padding:.15rem .6rem;font-size:.8rem;margin-top:0';
+  const displays = db.listDisplays(u.email);
+  const displayRows = displays.length
+    ? displays
+        .map((d) => {
+          if (d.status === 'pending') {
+            return `<li style="text-align:left;margin:.5rem 0;">
+              <strong>New device ${esc(d.friendly_id)}</strong> (${esc(d.mac)}) asked to be set up ${fmt(d.created_at)}
+              <form method="POST" action="/displays/${d.id}/approve" style="display:inline">
+                <input name="label" placeholder="Label" maxlength="60" style="padding:.15rem .4rem;border-radius:6px;border:1px solid #2c365a;background:#1f2740;color:#e6e9f0" />
+                <button class="btn" style="${smallBtn};background:#2f7a4b" type="submit">Approve</button>
+              </form>
+              <form method="POST" action="/displays/${d.id}/revoke" style="display:inline">
+                <button class="btn" style="${smallBtn};background:#7a3b3b" type="submit">Reject</button>
+              </form>
+            </li>`;
+          }
+          if (d.status !== 'active') return '';
+          const battery = d.battery_voltage ? ` · ${d.battery_voltage.toFixed(2)} V` : '';
+          const resetup = d.setup_requested_at
+            ? `<br /><span style="color:#ffcf6b">Asked to be set up again ${fmt(d.setup_requested_at)} — approving issues a new key.</span>
+               <form method="POST" action="/displays/${d.id}/approve" style="display:inline">
+                 <button class="btn" style="${smallBtn};background:#2f7a4b" type="submit">Approve re-setup</button>
+               </form>`
+            : d.pending_key ? '<br /><span class="muted">Approved — waiting for the device to fetch its key.</span>' : '';
+          return `<li style="text-align:left;margin:.5rem 0;">
+            <strong>${esc(d.label)}</strong> (${esc(d.friendly_id)}${d.mac ? `, ${esc(d.mac)}` : ', manual key'}) —
+            last seen ${fmt(d.last_seen_at)}${battery}${d.fw_version ? ` · fw ${esc(d.fw_version)}` : ''}
+            <form method="POST" action="/displays/${d.id}/settings" style="display:inline">
+              every <input name="refresh_rate" type="number" min="60" max="86400" value="${d.refresh_rate}" style="width:5rem;padding:.15rem .3rem;border-radius:6px;border:1px solid #2c365a;background:#1f2740;color:#e6e9f0" /> s
+              <button class="btn" style="${smallBtn}" type="submit">Save</button>
+            </form>
+            <form method="POST" action="/displays/${d.id}/revoke" style="display:inline">
+              <button class="btn" style="${smallBtn};background:#7a3b3b" type="submit">Revoke</button>
+            </form>${resetup}
+          </li>`;
+        })
+        .join('')
+    : `<li>None yet. Point a TRMNL at <code>${issuer}</code> and it will appear here for approval.</li>`;
   res.send(
     page(
       'Starchart',
@@ -282,6 +332,12 @@ app.get('/', requireAuth, (req, res) => {
        <ul style="list-style:none;padding:0">${deviceRows}</ul>
        <p style="margin-bottom:0"><strong>Connected apps (MCP)</strong></p>
        <ul style="list-style:none;padding:0">${grantRows}</ul>
+       <p style="margin-bottom:0"><strong>E-ink displays</strong> · <a href="/displays/preview.png" style="color:#9aa4bf">preview dashboard</a></p>
+       <ul style="list-style:none;padding:0">${displayRows}</ul>
+       <form method="POST" action="/displays/create-key" style="margin:.25rem 0 1rem">
+         <input name="label" placeholder="Label for a non-TRMNL display" maxlength="60" style="padding:.3rem .5rem;border-radius:8px;border:1px solid #2c365a;background:#1f2740;color:#e6e9f0" />
+         <button class="btn" style="padding:.3rem .8rem;font-size:.9rem;margin-top:0" type="submit">Create key</button>
+       </form>
        <form method="POST" action="/logout"><button class="btn" type="submit">Sign out</button></form>
        <p class="muted">Deployed on Fly.io · authed with Google</p>`
     )

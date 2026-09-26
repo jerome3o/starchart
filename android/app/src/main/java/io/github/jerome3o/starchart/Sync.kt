@@ -126,6 +126,12 @@ object Sync {
         return response.getInt("accepted")
     }
 
+    /** Authenticated JSON call to the server; throws on non-2xx. */
+    fun call(context: Context, method: String, path: String, body: JSONObject? = null): JSONObject {
+        val token = token(context) ?: throw UnauthorizedException()
+        return request(method, path, token, body)
+    }
+
     private fun request(method: String, path: String, token: String, body: JSONObject?): JSONObject {
         val connection = URL(SERVER_URL + path).openConnection() as HttpURLConnection
         try {

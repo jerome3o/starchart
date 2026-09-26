@@ -3,6 +3,7 @@
 const express = require('express');
 const db = require('./db');
 const createLimiter = require('./ratelimit');
+const goals = require('./goals');
 
 const router = express.Router();
 
@@ -64,5 +65,8 @@ router.post('/fixes', (req, res) => {
   db.setDeviceError(req.device.id, null);
   res.json({ accepted, total: db.fixCount(req.device.id) });
 });
+
+// Goal management for the phone (same device-token auth as above).
+router.use(goals.router);
 
 module.exports = router;
