@@ -1,0 +1,28 @@
+name: Fly logs
+
+# On-demand: prints recent app logs into the job output so they can be read
+# from the Actions API without a Fly token. The app logs no secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      lines:
+        description: "How many recent lines to show"
+        default: "200"
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        with:
+          version: 0.4.108
+
+      - name: Recent logs
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl logs --app starchart --no-tail | tail -n "${{ inputs.lines }}"
+
+      - name: Machine status
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl status --app starchart
