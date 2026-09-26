@@ -3,6 +3,11 @@ name: Deploy to Fly.io
 on:
   push:
     branches: [main]
+    # The Android app and docs don't affect the server image.
+    paths-ignore:
+      - "android/**"
+      - ".github/workflows/android-*.yml"
+      - "README.md"
   workflow_dispatch:
 
 # Never run two deploys at once; cancel an in-progress one if a newer push lands.
@@ -17,7 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned: resolving "latest" needs an unauthenticated GitHub API call
+      # that gets rate-limited on shared runners and fails the whole deploy.
       - uses: superfly/flyctl-actions/setup-flyctl@master
+        with:
+          version: 0.4.108
 
       # Push runtime secrets from GitHub Actions secrets -> Fly (staged, applied
       # by the deploy below). GitHub Actions is the single source of truth.
