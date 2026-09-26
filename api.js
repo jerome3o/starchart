@@ -51,6 +51,7 @@ router.get('/me', (req, res) => {
 router.post('/fixes', (req, res) => {
   const fixes = req.body && req.body.fixes;
   if (!Array.isArray(fixes) || fixes.length > 1000) {
+    db.setDeviceError(req.device.id, 'bad request body: expected {fixes: [...]} with at most 1000 items');
     return res.status(400).json({ error: 'expected {fixes: [...]} with at most 1000 items' });
   }
   const cleaned = [];
@@ -67,11 +68,13 @@ router.post('/fixes', (req, res) => {
       !Number.isFinite(lon) || lon < -180 || lon > 180 ||
       !Number.isFinite(accuracy) || accuracy < 0
     ) {
+      db.setDeviceError(req.device.id, `invalid fix rejected: ${JSON.stringify(fix).slice(0, 200)}`);
       return res.status(400).json({ error: 'invalid fix', fix });
     }
     cleaned.push({ clientId, time, lat, lon, accuracy });
   }
   const accepted = db.insertFixes(req.device.id, cleaned);
+  db.setDeviceError(req.device.id, null);
   res.json({ accepted, total: db.fixCount(req.device.id) });
 });
 

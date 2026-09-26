@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Explorer — Starchart</title>
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b1020; color: #e6e9f0;
+               font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  header { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+           padding: .55rem .75rem; background: #151b2e; box-shadow: 0 2px 12px rgba(0,0,0,.4);
+           position: relative; z-index: 1000; }
+  header .home { color: #9aa4bf; text-decoration: none; font-weight: 600; margin-right: .25rem; }
+  button, input, select { background: #1f2740; color: #e6e9f0; border: 1px solid #2c365a;
+                          border-radius: 8px; padding: .4rem .6rem; font-size: .95rem; }
+  button { cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  input[type=date] { min-width: 9.5rem; }
+  #stats { font-size: .85rem; color: #9aa4bf; margin-left: auto; white-space: nowrap; }
+  #legend { display: flex; gap: .6rem; font-size: .8rem; color: #9aa4bf; flex-wrap: wrap; }
+  #legend span::before { content: ""; display: inline-block; width: .7rem; height: .7rem;
+                         border-radius: 50%; background: var(--c); margin-right: .3rem; vertical-align: -1px; }
+  #mapwrap { position: relative; flex: 1; }
+  #map { position: absolute; inset: 0; }
+  #empty { position: absolute; inset: 0; display: grid; place-items: center; z-index: 500;
+           pointer-events: none; color: #9aa4bf; font-size: 1.1rem; background: rgba(11,16,32,.55); }
+  #empty[hidden] { display: none; }
+  .leaflet-container { background: #0b1020; }
+  .leaflet-tile { filter: brightness(.75) contrast(1.05) saturate(.85); }
+  .leaflet-tooltip { background: #151b2e; color: #e6e9f0; border-color: #2c365a; }
+  .leaflet-tooltip-top:before { border-top-color: #2c365a; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <a class="home" href="/">⭐ Starchart</a>
+    <button id="prev" title="Previous day with data">‹</button>
+    <input type="date" id="day" />
+    <button id="next" title="Next day with data">›</button>
+    <button id="latest" title="Most recent day with data">Latest</button>
+    <select id="device"><option value="">All devices</option></select>
+    <span id="stats"></span>
+    <div id="legend"></div>
+  </header>
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div id="empty" hidden>No fixes on this day</div>
+  </div>
+</div>
+
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const colors = ['#ffc93c', '#4f7cff', '#4fd1a5', '#ff6b6b', '#c58bff', '#ffa94d'];
+
+  const map = L.map('map', { zoomControl: true }).setView([0, 0], 2);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(map);
+  const layer = L.layerGroup().addTo(map);
+
+  let days = [];            // [{day: 'YYYY-MM-DD', count}] in the viewer's timezone
+  let currentDay = null;
+  let currentFixes = [];
+  const knownDevices = new Map(); // deviceId -> label
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const hhmm = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  function dayBounds(day) {
+    const [y, m, d] = day.split('-').map(Number);
+    return [new Date(y, m - 1, d).getTime(), new Date(y, m - 1, d + 1).getTime()];
+  }
+
+  async function getJson(url) {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (res.redirected || res.status === 401) { location.href = '/login'; return null; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  function haversineM(a, b) {
+    const R = 6371000, toRad = (x) => (x * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat), dLon = toRad(b.lon - a.lon);
+    const s = Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  function colorFor(deviceId) {
+    const ids = [...knownDevices.keys()].sort((a, b) => a - b);
+    return colors[ids.indexOf(deviceId) % colors.length];
+  }
+
+  function render() {
+    layer.clearLayers();
+    const selected = $('device').value;
+    const fixes = selected ? currentFixes.filter((f) => String(f.deviceId) === selected) : currentFixes;
+    $('empty').hidden = fixes.length > 0;
+
+    const byDevice = new Map();
+    for (const f of fixes) {
+      if (!byDevice.has(f.deviceId)) byDevice.set(f.deviceId, []);
+      byDevice.get(f.deviceId).push(f);
+    }
+
+    let distance = 0;
+    const bounds = [];
+    for (const [deviceId, list] of byDevice) {
+      const color = colorFor(deviceId);
+      const latlngs = list.map((f) => [f.lat, f.lon]);
+      bounds.push(...latlngs);
+      L.polyline(latlngs, { color, weight: 3, opacity: .8 }).addTo(layer);
+      list.forEach((f, i) => {
+        if (i > 0) {
+          const prev = list[i - 1];
+          const d = haversineM(prev, f);
+          // Ignore hops smaller than the GPS uncertainty so a stationary phone
+          // doesn't rack up phantom kilometres.
+          if (d > Math.max(prev.accuracy, f.accuracy)) distance += d;
+        }
+        const isEnd = i === 0 || i === list.length - 1;
+        L.circleMarker([f.lat, f.lon], {
+          radius: isEnd ? 7 : 3.5,
+          color: isEnd ? '#fff' : color,
+          weight: isEnd ? 2 : 1,
+          fillColor: i === 0 ? '#4fd1a5' : color,
+          fillOpacity: .9,
+        })
+          .bindTooltip(`${hhmm(f.time)} · ±${Math.round(f.accuracy)} m · ${f.label}`)
+          .addTo(layer);
+      });
+    }
+
+    if (bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 17 });
+
+    if (fixes.length) {
+      const km = (distance / 1000).toFixed(distance < 10000 ? 2 : 1);
+      $('stats').textContent =
+        `${fixes.length} fixes · ${km} km · ${hhmm(fixes[0].time)}–${hhmm(fixes[fixes.length - 1].time)}`;
+    } else {
+      $('stats').textContent = '';
+    }
+
+    $('legend').innerHTML = byDevice.size > 1
+      ? [...byDevice.keys()].map((id) =>
+          `<span style="--c:${colorFor(id)}">${knownDevices.get(id)}</span>`).join('')
+      : '';
+  }
+
+  function updateNav() {
+    const idx = days.findIndex((d) => d.day >= currentDay);
+    const exact = idx !== -1 && days[idx].day === currentDay;
+    $('prev').disabled = !days.some((d) => d.day < currentDay);
+    $('next').disabled = !days.some((d) => d.day > currentDay);
+    $('latest').disabled = !days.length || (exact && idx === days.length - 1);
+  }
+
+  async function show(day) {
+    currentDay = day;
+    $('day').value = day;
+    try { localStorage.setItem('starchart.day', day); } catch (_) {}
+    const [from, to] = dayBounds(day);
+    const fixes = await getJson(`/fixes.json?from=${from}&to=${to}`);
+    if (!fixes) return;
+    currentFixes = fixes;
+    for (const f of fixes) knownDevices.set(f.deviceId, f.label);
+    syncDeviceSelect();
+    render();
+    updateNav();
+  }
+
+  function syncDeviceSelect() {
+    const select = $('device');
+    const selected = select.value;
+    select.innerHTML = '<option value="">All devices</option>';
+    for (const [id, label] of knownDevices) {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = label;
+      select.appendChild(opt);
+    }
+    select.value = knownDevices.has(Number(selected)) ? selected : '';
+    select.parentElement.style.display = knownDevices.size > 1 ? '' : '';
+  }
+
+  $('prev').onclick = () => { const d = [...days].reverse().find((x) => x.day < currentDay); if (d) show(d.day); };
+  $('next').onclick = () => { const d = days.find((x) => x.day > currentDay); if (d) show(d.day); };
+  $('latest').onclick = () => { if (days.length) show(days[days.length - 1].day); };
+  $('day').onchange = (e) => { if (e.target.value) show(e.target.value); };
+  $('device').onchange = render;
+
+  (async () => {
+    days = (await getJson(`/fixes/days?offset=${new Date().getTimezoneOffset()}`)) || [];
+    let start = null;
+    try { start = localStorage.getItem('starchart.day'); } catch (_) {}
+    if (!start || !days.some((d) => d.day === start)) {
+      start = days.length ? days[days.length - 1].day : ymd(new Date());
+    }
+    await show(start);
+  })().catch((err) => {
+    $('stats').textContent = `Failed to load: ${err.message}`;
+  });
+})();
+</script>
+</body>
+</html>

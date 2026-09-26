@@ -21,6 +21,7 @@ object Sync {
     private const val KEY_LAST_SYNCED_ID = "last_synced_id"
     private const val KEY_LAST_SYNC_TIME = "last_sync_time"
     private const val KEY_UPLOADED = "uploaded_count"
+    private const val KEY_LAST_ERROR = "last_error"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -48,9 +49,21 @@ object Sync {
         prefs(context).edit()
             .putLong(KEY_LAST_SYNCED_ID, lastSyncedId)
             .putLong(KEY_UPLOADED, uploadedCount(context) + uploadedNow)
-            .putLong(KEY_LAST_SYNC_TIME, System.currentTimeMillis())
             .apply()
     }
+
+    fun recordSuccess(context: Context) {
+        prefs(context).edit()
+            .putLong(KEY_LAST_SYNC_TIME, System.currentTimeMillis())
+            .remove(KEY_LAST_ERROR)
+            .apply()
+    }
+
+    fun recordError(context: Context, message: String) {
+        prefs(context).edit().putString(KEY_LAST_ERROR, message).apply()
+    }
+
+    fun lastError(context: Context): String? = prefs(context).getString(KEY_LAST_ERROR, null)
 
     class UnauthorizedException : IOException("server rejected the device token")
 
@@ -86,7 +99,12 @@ object Sync {
             }
             val code = connection.responseCode
             if (code == 401) throw UnauthorizedException()
-            if (code !in 200..299) throw IOException("HTTP $code from $path")
+            if (code !in 200..299) {
+                val detail = try {
+                    connection.errorStream?.use { it.readBytes().decodeToString() }?.take(200)
+                } catch (_: IOException) { null }
+                throw IOException("HTTP $code from $path${if (detail.isNullOrBlank()) "" else ": $detail"}")
+            }
             val text = connection.inputStream.use { it.readBytes().decodeToString() }
             return JSONObject(text)
         } finally {
