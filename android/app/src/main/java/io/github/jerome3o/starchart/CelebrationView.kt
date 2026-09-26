@@ -21,7 +21,7 @@ import kotlin.random.Random
  * across the screen and a big rainbow WordArt "NICE!" that pops in, wobbles
  * and fades. Removes itself when done.
  */
-class CelebrationView(context: Context, private val word: String = "NICE!") : View(context) {
+class CelebrationView(context: Context, private val word: String = WORDS.random()) : View(context) {
 
     private class Piece(
         var x: Float, var y: Float, var vx: Float, var vy: Float,
@@ -70,7 +70,10 @@ class CelebrationView(context: Context, private val word: String = "NICE!") : Vi
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         if (pieces.isEmpty() && w > 0) spawn(w.toFloat(), h.toFloat())
-        val size = w * 0.27f
+        // Big, but shrunk to fit longer words within ~88% of the width.
+        fillPaint.textSize = 100f
+        val fit = 100f * (w * 0.88f) / fillPaint.measureText(word).coerceAtLeast(1f)
+        val size = minOf(w * 0.27f, fit)
         listOf(fillPaint, innerStroke, outerStroke, shadowPaint).forEach { it.textSize = size }
         innerStroke.strokeWidth = size * 0.10f
         outerStroke.strokeWidth = size * 0.19f
@@ -177,7 +180,11 @@ class CelebrationView(context: Context, private val word: String = "NICE!") : Vi
     }
 
     companion object {
-        private const val PIECE_COUNT = 170
+        private const val PIECE_COUNT = 320
+        private val WORDS = listOf(
+            "NICE!", "YES!", "BOOM!", "LEGEND", "NAILED IT", "WOO!", "HECK YES",
+            "CRUSHED IT", "STELLAR", "KAPOW!", "ON FIRE", "LET'S GO",
+        )
         private const val TOTAL_MS = 3200L
         private const val WORD_OUT_S = 1.5f
 

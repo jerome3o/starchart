@@ -116,4 +116,9 @@
 
     <string name="channel_services">Background services</string>
     <string name="channel_services_description">Persistent notifications while the overlay or location tracking runs</string>
+    <string name="widget_label">Starchart goals</string>
+    <string name="widget_description">Your goals and pace at a glance; tap + to log one.</string>
+    <string name="widget_period">Day %1$d of %2$d · ends %3$s</string>
+    <string name="widget_empty">No goals yet — open Starchart to add some.</string>
+    <string name="widget_log">Log a completion</string>
 </resources>
