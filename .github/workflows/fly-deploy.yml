@@ -43,6 +43,13 @@ jobs:
           flyctl volumes list --json | grep -q '"starchart_data"' || \
             flyctl volumes create starchart_data --region iad --size 1 --yes
 
+      # SQLite lives on one volume, so the app must run exactly one machine —
+      # Fly's default of two HA machines would need two volumes (split brain).
+      - name: Scale to a single machine
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl scale count 1 --yes
+
       - name: Deploy
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
