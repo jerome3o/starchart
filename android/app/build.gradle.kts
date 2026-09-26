@@ -17,6 +17,12 @@ android {
         targetSdk = 34
         versionCode = appVersionCode
         versionName = appVersionName
+
+        // MapLibre bundles native code per ABI; every modern phone is arm64,
+        // and shipping only that keeps the APK a third of the size.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     signingConfigs {
