@@ -79,6 +79,32 @@ The app can upload its location history to the webapp's API:
 - **Management:** the webapp home page lists linked devices with fix counts
   and revoke buttons. Revoking only invalidates the token — fixes are kept.
 
+## MCP server (for Claude.ai)
+
+The webapp exposes the location data over MCP at `https://starchart.fly.dev/mcp`
+(Streamable HTTP, stateless). Access is via OAuth 2.1, handled by the webapp
+itself:
+
+- **Discovery:** `/.well-known/oauth-authorization-server` and
+  `/.well-known/oauth-protected-resource`; unauthenticated `/mcp` calls get a
+  401 with a `resource_metadata` challenge, so clients find the flow on their own.
+- **Registration:** dynamic (`/oauth/register`), public clients only, https
+  redirect URIs only.
+- **Authorization:** `/oauth/authorize` sits behind the Google login +
+  allow-list and shows a consent page (CSRF-protected). PKCE (S256) is
+  mandatory; codes are single-use and expire in 10 minutes.
+- **Tokens:** access tokens live 1 hour, refresh tokens 90 days and rotate on
+  every use; only SHA-256 hashes are stored. Token-endpoint and bearer
+  failures are rate-limited per IP.
+- **Revocation:** the home page lists connected apps with revoke buttons.
+
+Tools: `get_latest_location`, `list_devices`, `list_days_with_data`,
+`get_day_summary`, `get_location_history` — all scoped to the signed-in user.
+
+**Connect Claude.ai:** Settings → Connectors → Add custom connector → URL
+`https://starchart.fly.dev/mcp` → Connect. You'll be sent through Google
+login and a consent page; after that Claude can call the tools.
+
 ## Webapp
 
 A minimal Express webapp with Google OAuth login, deployed to [Fly.io](https://fly.io)
