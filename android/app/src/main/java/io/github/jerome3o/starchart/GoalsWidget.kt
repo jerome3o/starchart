@@ -187,18 +187,10 @@ class GoalsWidgetService : RemoteViewsService() {
             views.setProgressBar(R.id.widget_goal_bar, max, (g.count * 100).coerceAtMost(max), false)
             views.setInt(R.id.widget_goal_bar, "setSecondaryProgress", (g.targetByNow * 100).toInt().coerceAtMost(max))
 
-            views.setOnClickFillInIntent(
-                R.id.widget_goal_plus,
-                Intent()
-                    .putExtra(GoalsWidgetProvider.EXTRA_GOAL_ID, g.id)
-                    .putExtra(WidgetActionActivity.EXTRA_MODE, WidgetActionActivity.MODE_LOG),
-            )
-            views.setOnClickFillInIntent(
-                R.id.widget_goal_row,
-                Intent()
-                    .putExtra(GoalsWidgetProvider.EXTRA_GOAL_ID, g.id)
-                    .putExtra(WidgetActionActivity.EXTRA_MODE, WidgetActionActivity.MODE_CHARGE),
-            )
+            // Both open the slider card: completions are only ever logged by sliding.
+            val openSlider = Intent().putExtra(GoalsWidgetProvider.EXTRA_GOAL_ID, g.id)
+            views.setOnClickFillInIntent(R.id.widget_goal_plus, openSlider)
+            views.setOnClickFillInIntent(R.id.widget_goal_row, openSlider)
             return views
         }
     }
