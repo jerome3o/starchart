@@ -20,9 +20,9 @@ import java.util.Random
 
 /**
  * Transparent activity launched from the widget, drawn straight over the home
- * screen. "log" plays the celebration and logs; "charge" slides up a card with
- * the charge slider, and completing it logs and celebrates. Either way it
- * closes itself afterwards, leaving you on the home screen.
+ * screen: slides up a card with the charge slider for one goal. Finishing the
+ * slide is the only way to log from the widget; it then celebrates and closes
+ * itself, leaving you on the home screen.
  */
 class WidgetActionActivity : Activity() {
 
@@ -45,13 +45,10 @@ class WidgetActionActivity : Activity() {
             finishQuietly()
             return
         }
-        when (intent.getStringExtra(EXTRA_MODE)) {
-            MODE_CHARGE -> showCharge(goal)
-            else -> logAndCelebrate(goal)
-        }
+        showCharge(goal)
     }
 
-    // --- Quick log from "+" -------------------------------------------------------
+    // --- Completion (only reachable by finishing the slider) ------------------------
 
     private fun logAndCelebrate(goal: GoalsApi.Goal) {
         if (done) return
@@ -66,7 +63,7 @@ class WidgetActionActivity : Activity() {
         main.postDelayed({ finishQuietly() }, 3200)
     }
 
-    // --- Charge card from tapping a goal row ---------------------------------------
+    // --- Charge card ------------------------------------------------------------------
 
     private fun showCharge(goal: GoalsApi.Goal) {
         val density = resources.displayMetrics.density
@@ -173,9 +170,4 @@ class WidgetActionActivity : Activity() {
         overridePendingTransition(0, 0)
     }
 
-    companion object {
-        const val EXTRA_MODE = "mode"
-        const val MODE_LOG = "log"
-        const val MODE_CHARGE = "charge"
-    }
 }
