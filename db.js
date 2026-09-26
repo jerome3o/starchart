@@ -36,6 +36,41 @@ CREATE TABLE IF NOT EXISTS fixes (
 CREATE INDEX IF NOT EXISTS idx_fixes_device_time ON fixes (device_id, time);
 `);
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id TEXT PRIMARY KEY,
+  client_name TEXT NOT NULL,
+  redirect_uris TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  code_challenge TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  email TEXT NOT NULL,
+  resource TEXT,
+  expires_at INTEGER NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS oauth_grants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  access_hash TEXT NOT NULL UNIQUE,
+  access_expires_at INTEGER NOT NULL,
+  refresh_hash TEXT UNIQUE,
+  refresh_expires_at INTEGER,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  revoked INTEGER NOT NULL DEFAULT 0
+);
+`);
+
 // Schema additions after the first release (SQLite has no ADD COLUMN IF NOT EXISTS).
 const deviceColumns = db.prepare('PRAGMA table_info(devices)').all().map((c) => c.name);
 if (!deviceColumns.includes('last_error')) {
@@ -108,6 +143,143 @@ function fixCount(deviceId) {
   return db.prepare('SELECT COUNT(*) AS c FROM fixes WHERE device_id = ?').get(deviceId).c;
 }
 
+// --- Location queries for the MCP server (always scoped to one user) --------
+
+function latestFix(email) {
+  return db
+    .prepare(
+      `SELECT f.time, f.lat, f.lon, f.accuracy, f.device_id AS deviceId, d.label AS deviceLabel
+       FROM fixes f JOIN devices d ON d.id = f.device_id
+       WHERE d.email = ? ORDER BY f.time DESC LIMIT 1`
+    )
+    .get(email.toLowerCase());
+}
+
+function fixesBetween(email, fromMs, toMs, deviceId = null) {
+  return db
+    .prepare(
+      `SELECT f.time, f.lat, f.lon, f.accuracy, f.device_id AS deviceId, d.label AS deviceLabel
+       FROM fixes f JOIN devices d ON d.id = f.device_id
+       WHERE d.email = ? AND f.time >= ? AND f.time < ?
+         AND (? IS NULL OR f.device_id = ?)
+       ORDER BY f.time ASC`
+    )
+    .all(email.toLowerCase(), fromMs, toMs, deviceId, deviceId);
+}
+
+// Calendar days with fixes, bucketed using a fixed UTC offset in minutes
+// (east positive), with counts.
+function daysWithFixes(email, offsetMinutes) {
+  return db
+    .prepare(
+      `SELECT date((f.time / 1000) + ?, 'unixepoch') AS day, COUNT(*) AS count
+       FROM fixes f JOIN devices d ON d.id = f.device_id
+       WHERE d.email = ?
+       GROUP BY day ORDER BY day ASC`
+    )
+    .all(offsetMinutes * 60, email.toLowerCase());
+}
+
+// --- OAuth clients, codes and grants -----------------------------------------
+
+function createOAuthClient(clientName, redirectUris) {
+  const clientId = crypto.randomBytes(16).toString('hex');
+  db.prepare(
+    'INSERT INTO oauth_clients (client_id, client_name, redirect_uris, created_at) VALUES (?, ?, ?, ?)'
+  ).run(clientId, String(clientName).slice(0, 100), JSON.stringify(redirectUris), Date.now());
+  return clientId;
+}
+
+function getOAuthClient(clientId) {
+  const row = db.prepare('SELECT * FROM oauth_clients WHERE client_id = ?').get(clientId);
+  return row ? { ...row, redirect_uris: JSON.parse(row.redirect_uris) } : null;
+}
+
+function createAuthCode({ clientId, redirectUri, codeChallenge, scope, email, resource }) {
+  const code = crypto.randomBytes(32).toString('hex');
+  db.prepare(
+    `INSERT INTO oauth_codes (code_hash, client_id, redirect_uri, code_challenge, scope, email, resource, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(hashToken(code), clientId, redirectUri, codeChallenge, scope, email.toLowerCase(), resource || null,
+    Date.now() + 10 * 60 * 1000);
+  return code;
+}
+
+// Single use: returns the code row once, or null if unknown/expired/used.
+const consumeAuthCode = db.transaction((code) => {
+  const row = db
+    .prepare('SELECT * FROM oauth_codes WHERE code_hash = ? AND used = 0 AND expires_at > ?')
+    .get(hashToken(code), Date.now());
+  if (!row) return null;
+  db.prepare('UPDATE oauth_codes SET used = 1 WHERE code_hash = ?').run(row.code_hash);
+  return row;
+});
+
+const ACCESS_TTL_MS = 60 * 60 * 1000;
+const REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+function issueTokens({ clientId, email, scope }) {
+  const accessToken = crypto.randomBytes(32).toString('hex');
+  const refreshToken = crypto.randomBytes(32).toString('hex');
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO oauth_grants (client_id, email, scope, access_hash, access_expires_at,
+       refresh_hash, refresh_expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(clientId, email.toLowerCase(), scope, hashToken(accessToken), now + ACCESS_TTL_MS,
+    hashToken(refreshToken), now + REFRESH_TTL_MS, now);
+  return { accessToken, refreshToken, expiresIn: ACCESS_TTL_MS / 1000 };
+}
+
+function grantForAccessToken(token) {
+  const grant = db
+    .prepare(
+      `SELECT g.id, g.client_id, g.email, g.scope, c.client_name
+       FROM oauth_grants g JOIN oauth_clients c ON c.client_id = g.client_id
+       WHERE g.access_hash = ? AND g.revoked = 0 AND g.access_expires_at > ?`
+    )
+    .get(hashToken(token), Date.now());
+  if (grant) {
+    db.prepare('UPDATE oauth_grants SET last_used_at = ? WHERE id = ?').run(Date.now(), grant.id);
+  }
+  return grant;
+}
+
+// Rotates: the old grant is revoked and a fresh access/refresh pair issued.
+const rotateRefreshToken = db.transaction((refreshToken, clientId) => {
+  const grant = db
+    .prepare(
+      `SELECT * FROM oauth_grants WHERE refresh_hash = ? AND client_id = ? AND revoked = 0
+       AND refresh_expires_at > ?`
+    )
+    .get(hashToken(refreshToken), clientId, Date.now());
+  if (!grant) return null;
+  db.prepare('UPDATE oauth_grants SET revoked = 1 WHERE id = ?').run(grant.id);
+  return { ...issueTokens({ clientId, email: grant.email, scope: grant.scope }), scope: grant.scope };
+});
+
+function listGrants(email) {
+  return db
+    .prepare(
+      `SELECT g.client_id, c.client_name, MIN(g.created_at) AS first_connected,
+              MAX(g.last_used_at) AS last_used
+       FROM oauth_grants g JOIN oauth_clients c ON c.client_id = g.client_id
+       WHERE g.email = ? AND g.revoked = 0 AND g.refresh_expires_at > ?
+       GROUP BY g.client_id ORDER BY first_connected`
+    )
+    .all(email.toLowerCase(), Date.now());
+}
+
+function revokeClientGrants(email, clientId) {
+  db.prepare('UPDATE oauth_grants SET revoked = 1 WHERE email = ? AND client_id = ?')
+    .run(email.toLowerCase(), clientId);
+}
+
+function purgeExpiredOAuth() {
+  db.prepare('DELETE FROM oauth_codes WHERE used = 1 OR expires_at < ?').run(Date.now());
+  db.prepare('DELETE FROM oauth_grants WHERE refresh_expires_at < ?').run(Date.now());
+}
+
 module.exports = {
   createDevice,
   deviceForToken,
@@ -116,4 +288,17 @@ module.exports = {
   setDeviceError,
   insertFixes,
   fixCount,
+  latestFix,
+  fixesBetween,
+  daysWithFixes,
+  createOAuthClient,
+  getOAuthClient,
+  createAuthCode,
+  consumeAuthCode,
+  issueTokens,
+  grantForAccessToken,
+  rotateRefreshToken,
+  listGrants,
+  revokeClientGrants,
+  purgeExpiredOAuth,
 };

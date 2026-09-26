@@ -2,38 +2,25 @@
 
 const express = require('express');
 const db = require('./db');
+const createLimiter = require('./ratelimit');
 
 const router = express.Router();
 
-// Small in-memory limiter: block an IP for a minute after repeated bad tokens,
-// so token guessing is hopeless even beyond the 256-bit search space.
-const failures = new Map();
-function tooManyFailures(ip) {
-  const entry = failures.get(ip);
-  return entry && entry.count >= 20 && Date.now() - entry.since < 60_000;
-}
-function recordFailure(ip) {
-  const entry = failures.get(ip) || { count: 0, since: Date.now() };
-  if (Date.now() - entry.since > 60_000) {
-    entry.count = 0;
-    entry.since = Date.now();
-  }
-  entry.count += 1;
-  failures.set(ip, entry);
-  if (failures.size > 10_000) failures.clear();
-}
+// Block an IP for a minute after repeated bad tokens, so token guessing is
+// hopeless even beyond the 256-bit search space.
+const limiter = createLimiter({ max: 20, windowMs: 60_000 });
 
 router.use(express.json({ limit: '1mb' }));
 
 router.use((req, res, next) => {
-  if (tooManyFailures(req.ip)) {
+  if (limiter.blocked(req.ip)) {
     return res.status(429).json({ error: 'too many attempts, slow down' });
   }
   const header = req.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
   const device = token ? db.deviceForToken(token) : null;
   if (!device) {
-    recordFailure(req.ip);
+    limiter.fail(req.ip);
     return res.status(401).json({ error: 'invalid or missing token' });
   }
   req.device = device;

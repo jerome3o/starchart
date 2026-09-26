@@ -5,6 +5,8 @@ const express = require('express');
 const cookieSession = require('cookie-session');
 const db = require('./db');
 const api = require('./api');
+const { createOAuthRouter } = require('./oauth');
+const { handleMcpRequest } = require('./mcp');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -220,6 +222,21 @@ app.post('/devices/:id/revoke', requireAuth, express.urlencoded({ extended: fals
 
 app.use('/api', api);
 
+// --- MCP server for Claude.ai and other OAuth-capable MCP clients -----------
+
+const issuer = (BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const oauth = createOAuthRouter({ issuer, requireAuth, page });
+app.use(oauth.router);
+db.purgeExpiredOAuth();
+
+app.post('/mcp', oauth.requireBearer('location:read'), express.json({ limit: '1mb' }), (req, res, next) => {
+  handleMcpRequest(req, res).catch(next);
+});
+app.all('/mcp', (_req, res) => {
+  res.set('Allow', 'POST');
+  res.status(405).json({ error: 'method_not_allowed' });
+});
+
 app.get('/', requireAuth, (req, res) => {
   const u = req.session.user;
   const devices = db.listDevices(u.email);
@@ -241,13 +258,30 @@ app.get('/', requireAuth, (req, res) => {
         )
         .join('')
     : '<li>No devices linked yet — use “Link to server” in the Android app.</li>';
+  const grants = db.listGrants(u.email);
+  const grantRows = grants.length
+    ? grants
+        .map(
+          (g) => `<li style="text-align:left;margin:.5rem 0;">
+            <strong>${g.client_name.replace(/[<>&]/g, '')}</strong> —
+            connected ${fmt(g.first_connected)}, last used ${fmt(g.last_used)}
+            <form method="POST" action="/oauth/grants/${g.client_id}/revoke" style="display:inline">
+              <button class="btn" style="padding:.15rem .6rem;font-size:.8rem;background:#7a3b3b" type="submit">Revoke</button>
+            </form>
+          </li>`
+        )
+        .join('')
+    : `<li>None. MCP endpoint: <code>${issuer}/mcp</code></li>`;
   res.send(
     page(
       'Starchart',
       `${u.picture ? `<img class="avatar" src="${u.picture}" alt="" referrerpolicy="no-referrer" />` : ''}
        <h1>⭐ Hello, ${u.name || u.email}</h1>
        <p>You're signed in as <strong>${u.email}</strong>.</p>
+       <p style="margin-bottom:0"><strong>Devices</strong></p>
        <ul style="list-style:none;padding:0">${deviceRows}</ul>
+       <p style="margin-bottom:0"><strong>Connected apps (MCP)</strong></p>
+       <ul style="list-style:none;padding:0">${grantRows}</ul>
        <form method="POST" action="/logout"><button class="btn" type="submit">Sign out</button></form>
        <p class="muted">Deployed on Fly.io · authed with Google</p>`
     )

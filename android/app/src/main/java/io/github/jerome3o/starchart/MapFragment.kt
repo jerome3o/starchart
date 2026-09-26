@@ -113,11 +113,21 @@ class MapFragment : Fragment() {
     private fun addLayers(s: Style) {
         s.addSource(GeoJsonSource(SRC_LINE))
         s.addSource(GeoJsonSource(SRC_POINTS))
+        // A white casing under a black line stays visible on any basemap,
+        // light or dark, instead of blending into yellow roads.
+        s.addLayer(
+            LineLayer(LAYER_LINE_CASING, SRC_LINE).withProperties(
+                PropertyFactory.lineColor("#ffffff"),
+                PropertyFactory.lineWidth(6f),
+                PropertyFactory.lineOpacity(0.9f),
+                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            )
+        )
         s.addLayer(
             LineLayer(LAYER_LINE, SRC_LINE).withProperties(
-                PropertyFactory.lineColor(GOLD),
+                PropertyFactory.lineColor("#111111"),
                 PropertyFactory.lineWidth(3f),
-                PropertyFactory.lineOpacity(0.85f),
                 PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
                 PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             )
@@ -126,9 +136,9 @@ class MapFragment : Fragment() {
             CircleLayer(LAYER_POINTS, SRC_POINTS).withProperties(
                 PropertyFactory.circleRadius(
                     Expression.switchCase(
-                        Expression.has("end"), Expression.literal(7f),
+                        Expression.has("end"), Expression.literal(8f),
                         Expression.has("poor"), Expression.literal(2.5f),
-                        Expression.literal(3.5f)
+                        Expression.literal(4f)
                     )
                 ),
                 PropertyFactory.circleColor(Expression.get("color")),
@@ -137,14 +147,10 @@ class MapFragment : Fragment() {
                         Expression.has("poor"), Expression.literal(0.45f), Expression.literal(1f)
                     )
                 ),
-                PropertyFactory.circleStrokeColor(
-                    Expression.switchCase(
-                        Expression.has("end"), Expression.literal("#ffffff"), Expression.literal("#000000")
-                    )
-                ),
+                PropertyFactory.circleStrokeColor("#111111"),
                 PropertyFactory.circleStrokeWidth(
                     Expression.switchCase(
-                        Expression.has("end"), Expression.literal(2f), Expression.literal(1f)
+                        Expression.has("end"), Expression.literal(2.5f), Expression.literal(1.5f)
                     )
                 ),
             )
@@ -286,6 +292,7 @@ class MapFragment : Fragment() {
         private const val MAX_GOOD_ACCURACY_M = 250f
         private const val SRC_LINE = "fix-line-src"
         private const val SRC_POINTS = "fix-points-src"
+        private const val LAYER_LINE_CASING = "fix-line-casing"
         private const val LAYER_LINE = "fix-line"
         private const val LAYER_POINTS = "fix-points"
         private const val GOLD = "#ffc93c"
