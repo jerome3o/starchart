@@ -25,7 +25,7 @@ const X_MARGIN = 20;
 const HEADER_HEIGHT = 62;
 const HEADER_LINE_Y = 52;
 const BOTTOM_MARGIN = 20;
-const BAR_HEIGHT = 20;
+const BAR_HEIGHT = 22;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function fmtDate(ymd, withYear) {
@@ -81,8 +81,9 @@ function drawDashboard(email, nowMs = Date.now()) {
   const periodDays = Math.max(14, ...data.goals.map((g) => g.period_days));
   const period = goals.currentPeriod(nowMs, data.timezone, periodDays);
 
-  // Weekend band behind everything (interior Saturdays/Sundays only).
-  ctx.fillStyle = '#d0d0d0';
+  // Weekend band behind everything (interior Saturdays/Sundays only), as a
+  // dot hatch: pure black/white reads far crisper on e-ink than dithered gray.
+  ctx.fillStyle = '#000';
   for (let d = 1; d < periodDays - 1; d++) {
     const [y, m, dd] = period.startDate.split('-').map(Number);
     const dayMs = time.localMidnightUtc(...time.addDays(y, m, dd, d), data.timezone) + 12 * 3600e3;
@@ -90,15 +91,17 @@ function drawDashboard(email, nowMs = Date.now()) {
     if (weekday === 'Sat' || weekday === 'Sun') {
       const x0 = X_MARGIN + Math.floor((d / periodDays) * barWidth);
       const x1 = X_MARGIN + Math.floor(((d + 1) / periodDays) * barWidth);
-      ctx.fillRect(x0, HEADER_LINE_Y, x1 - x0, HEIGHT - HEADER_LINE_Y);
+      for (let yy = HEADER_LINE_Y + 2; yy < HEIGHT; yy += 4) {
+        for (let xx = x0 + ((yy / 4) % 2 ? 2 : 0); xx < x1; xx += 4) ctx.fillRect(xx, yy, 1, 1);
+      }
     }
   }
 
   // Header
   ctx.fillStyle = '#000';
-  ctx.font = `20px ${FAMILY}`;
+  ctx.font = `bold 22px ${FAMILY}`;
   ctx.fillText(`${fmtDate(period.startDate, false)} - ${fmtDate(period.endDate, true)}`, X_MARGIN, 10);
-  ctx.font = `14px ${FAMILY}`;
+  ctx.font = `16px ${FAMILY}`;
   ctx.fillText(`Day ${period.dayOfPeriod + 1} of ${periodDays} (${period.weekday})`, X_MARGIN, 32);
   const p = time.localParts(nowMs, data.timezone);
   const updated = `Updated: ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
@@ -116,12 +119,12 @@ function drawDashboard(email, nowMs = Date.now()) {
     data.goals.forEach((g, i) => {
       const y = HEADER_HEIGHT + Math.floor(i * spacing);
       ctx.fillStyle = '#000';
-      ctx.font = `16px ${FAMILY}`;
+      ctx.font = `20px ${FAMILY}`;
       ctx.fillText(g.emoji ? `${g.emoji} ${g.name}` : g.name, X_MARGIN, y);
       const countText = `${g.count}/${Number.isInteger(g.target) ? g.target : g.target.toFixed(1)}`;
-      ctx.font = `bold 16px ${FAMILY}`;
+      ctx.font = `bold 20px ${FAMILY}`;
       ctx.fillText(countText, WIDTH - X_MARGIN - ctx.measureText(countText).width, y);
-      const barY = y + 22;
+      const barY = y + 28;
       // A shorter-period goal (7 days on a 14-day axis) occupies the slice of
       // the timeline that is its current period, so the "now" line still applies.
       const own = goals.currentPeriod(nowMs, data.timezone, g.period_days);
@@ -150,14 +153,7 @@ function drawDashboard(email, nowMs = Date.now()) {
   return canvas;
 }
 
-// --- 1-bit PNG encoding with ordered dithering ---------------------------------
-
-const BAYER4 = [
-  [0, 8, 2, 10],
-  [12, 4, 14, 6],
-  [3, 11, 1, 9],
-  [15, 7, 13, 5],
-];
+// --- 1-bit PNG encoding ---------------------------------
 
 const CRC_TABLE = new Uint32Array(256).map((_, n) => {
   let c = n;
@@ -191,8 +187,9 @@ function canvasToPng1bit(canvas) {
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4;
       const lum = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
-      const threshold = ((BAYER4[y & 3][x & 3] + 0.5) / 16) * 255;
-      if (lum > threshold) raw[rowStart + 1 + (x >> 3)] |= 0x80 >> (x & 7); // 1 = white
+      // Straight threshold: anti-aliased edges snap to black/white instead of
+      // turning into speckle under dithering.
+      if (lum > 140) raw[rowStart + 1 + (x >> 3)] |= 0x80 >> (x & 7); // 1 = white
     }
   }
   const ihdr = Buffer.alloc(13);
