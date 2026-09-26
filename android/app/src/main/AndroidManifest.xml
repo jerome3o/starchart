@@ -14,6 +14,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Sideloaded app: exact alarms without a user toggle, for future reminders. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 

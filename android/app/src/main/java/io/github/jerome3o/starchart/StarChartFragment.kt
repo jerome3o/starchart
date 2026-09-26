@@ -27,6 +27,9 @@ class StarChartFragment : Fragment() {
 
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
+    private val sound = ChargeSound()
+    private lateinit var haptics: Haptics
+    private val shakeRandom = java.util.Random()
     private var snapshot: GoalsApi.Snapshot? = null
     private lateinit var adapter: GoalAdapter
 
@@ -35,7 +38,8 @@ class StarChartFragment : Fragment() {
     ): View = inflater.inflate(R.layout.fragment_starchart, container, false)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        adapter = GoalAdapter()
+        haptics = Haptics(requireContext())
+        adapter = GoalAdapter().apply { setHasStableIds(true) }
         val list = view.findViewById<RecyclerView>(R.id.goal_list)
         list.layoutManager = LinearLayoutManager(requireContext())
         list.adapter = adapter
@@ -54,6 +58,12 @@ class StarChartFragment : Fragment() {
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
         if (!hidden) load()
+    }
+
+    override fun onPause() {
+        sound.stop()
+        stopShake()
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -219,6 +229,49 @@ class StarChartFragment : Fragment() {
     private fun formatNumber(value: Double): String =
         if (value == Math.floor(value)) value.toLong().toString() else value.toString()
 
+    // --- Charge slider feedback ----------------------------------------------------
+
+    private fun shake(progress: Float) {
+        val root = view ?: return
+        val amount = 12f * resources.displayMetrics.density * progress * progress
+        root.translationX = (shakeRandom.nextFloat() * 2 - 1) * amount
+        root.translationY = (shakeRandom.nextFloat() * 2 - 1) * amount * 0.6f
+        root.rotation = (shakeRandom.nextFloat() * 2 - 1) * 0.8f * progress * progress
+    }
+
+    private fun stopShake() {
+        view?.animate()?.translationX(0f)?.translationY(0f)?.rotation(0f)?.setDuration(160)?.start()
+    }
+
+    private fun chargeListener(goal: GoalsApi.Goal, slider: ChargeSliderView) = object : ChargeSliderView.Listener {
+        override fun onChargeStart() {
+            sound.level = 0f
+            sound.start()
+            haptics.tick(0.1f)
+        }
+
+        override fun onChargeProgress(progress: Float) {
+            sound.level = progress
+            shake(progress)
+        }
+
+        override fun onNotch(index: Int, progress: Float) {
+            haptics.tick((index + 1f) / slider.notches.size)
+        }
+
+        override fun onChargeComplete() {
+            haptics.celebrate()
+            sound.chime()
+        }
+
+        override fun onChargeRelease(completed: Boolean) {
+            sound.stop()
+            stopShake()
+            // Log on release, so the list isn't re-rendered under a moving finger.
+            if (completed) logCompletion(goal)
+        }
+    }
+
     // --- List adapter ------------------------------------------------------------
 
     private inner class GoalAdapter : RecyclerView.Adapter<GoalAdapter.Holder>() {
@@ -231,6 +284,8 @@ class StarChartFragment : Fragment() {
 
         override fun getItemCount() = items.size
 
+        override fun getItemId(position: Int) = items[position].id
+
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder =
             Holder(LayoutInflater.from(parent.context).inflate(R.layout.item_goal, parent, false))
 
@@ -242,7 +297,7 @@ class StarChartFragment : Fragment() {
             private val count = view.findViewById<TextView>(R.id.goal_count)
             private val bar = view.findViewById<PaceBarView>(R.id.goal_bar)
             private val status = view.findViewById<TextView>(R.id.goal_status)
-            private val done = view.findViewById<Button>(R.id.goal_done)
+            private val slider = view.findViewById<ChargeSliderView>(R.id.goal_slider)
             private val undoButton = view.findViewById<Button>(R.id.goal_undo)
             private val menu = view.findViewById<Button>(R.id.goal_menu)
 
@@ -257,7 +312,8 @@ class StarChartFragment : Fragment() {
                     else -> getString(R.string.status_on_track, goal.daysLeft)
                 }
                 undoButton.isEnabled = goal.count > 0
-                done.setOnClickListener { logCompletion(goal) }
+                slider.label = getString(R.string.slide_to_log)
+                slider.listener = chargeListener(goal, slider)
                 undoButton.setOnClickListener { undo(goal) }
                 menu.setOnClickListener { showMenu(it, goal) }
             }
