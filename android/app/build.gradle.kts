@@ -1,6 +1,6 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id("com.google.devtools.ksp")
 }
 
 // CI passes these from the release tag (e.g. v0.2.0 -> -PversionName=0.2.0).
@@ -9,7 +9,7 @@ val appVersionCode = ((project.findProperty("versionCode") as String?) ?: "1").t
 
 android {
     namespace = "io.github.jerome3o.starchart"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "io.github.jerome3o.starchart"
@@ -48,9 +48,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 }
 
 dependencies {
@@ -62,4 +59,17 @@ dependencies {
     implementation("org.maplibre.gl:android-sdk:11.8.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+
+    // App Functions: lets on-device agents (Gemini) discover and call the
+    // functions in StarchartAppFunctionService. Android 16+ only.
+    implementation("androidx.appfunctions:appfunctions:1.0.0-alpha12")
+    ksp("androidx.appfunctions:appfunctions-compiler:1.0.0-alpha12")
 }
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+ksp { arg("appfunctions:aggregateAppFunctions", "true") }

@@ -160,9 +160,23 @@ location — whatever the token's scopes allow). Listed tool schemas omit
 boolean sub-schemas (`additionalProperties: false`) because the Gemini SDK's
 converter crashes on them; arguments are still validated server-side.
 
-Gemini *on the phone* calling the app would use Android App Functions
-(Android 16+), which as of mid-2026 is a private preview for Gemini, so it
-isn't wired up yet.
+## Gemini on the phone (Android App Functions)
+
+The app exposes [App Functions](https://developer.android.com/ai/appfunctions)
+(Android 16+) that on-device agents like Gemini can discover and call —
+`BaseStarchartAppFunctionService` (KSP generates the concrete service and
+`assets/starchart_app_function_service.xml` from the KDoc):
+
+- `getGoals` — every goal's count, target, pace and days left.
+- `openGoalSlider(goalName)` — returns a PendingIntent for the slider card;
+  goals are still only logged by finishing the slide.
+
+Caveats: only callers holding `EXECUTE_APP_FUNCTIONS` (a privileged,
+system-granted permission) can call them, and Gemini's third-party App
+Functions support is a private preview — apps are admitted via Google's
+[Early Access Program form](https://forms.gle/GN5ybjQFhzHRCguM7). Check
+registration with `adb shell cmd app_function list-app-functions`.
+Requires AGP 9.1+ and compileSdk 37 (targetSdk stays 34).
 
 ## Webapp
 
