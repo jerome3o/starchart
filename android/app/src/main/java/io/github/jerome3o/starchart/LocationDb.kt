@@ -9,7 +9,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 class LocationDb(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "locations.db", null, 1) {
+    SQLiteOpenHelper(context.applicationContext, "locations.db", null, 2) {
 
     data class Fix(val timeMs: Long, val lat: Double, val lon: Double, val accuracyM: Float)
 
@@ -33,9 +33,46 @@ class LocationDb(context: Context) :
             )
             """.trimIndent()
         )
+        createEvents(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createEvents(db)
+    }
+
+    /** Tracking diagnostics (see [TrackingLog]); uploaded like fixes, never deleted. */
+    private fun createEvents(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                time INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                detail TEXT
+            )
+            """.trimIndent()
+        )
+    }
+
+    data class Event(val id: Long, val timeMs: Long, val kind: String, val detail: String?)
+
+    fun insertEvent(timeMs: Long, kind: String, detail: String?) {
+        writableDatabase.insert("events", null, ContentValues().apply {
+            put("time", timeMs)
+            put("kind", kind)
+            put("detail", detail)
+        })
+    }
+
+    fun eventsAfter(id: Long, limit: Int): List<Event> =
+        readableDatabase.rawQuery(
+            "SELECT id, time, kind, detail FROM events WHERE id > ? ORDER BY id ASC LIMIT ?",
+            arrayOf(id.toString(), limit.toString())
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) add(Event(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3)))
+            }
+        }
 
     fun insert(fix: Fix) {
         writableDatabase.insert("fixes", null, ContentValues().apply {

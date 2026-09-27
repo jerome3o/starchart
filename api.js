@@ -66,6 +66,26 @@ router.post('/fixes', (req, res) => {
   res.json({ accepted, total: db.fixCount(req.device.id) });
 });
 
+// Tracking diagnostics from the phone (see LocationDb events on Android).
+router.post('/events', (req, res) => {
+  const events = req.body && req.body.events;
+  if (!Array.isArray(events) || events.length > 1000) {
+    return res.status(400).json({ error: 'expected {events: [...]} with at most 1000 items' });
+  }
+  const cleaned = [];
+  for (const e of events) {
+    const clientId = Number(e.clientId);
+    const time = Number(e.time);
+    if (!Number.isInteger(clientId) || clientId < 0 || !Number.isFinite(time) || time <= 0 ||
+        typeof e.kind !== 'string' || !/^[a-z_]{1,40}$/.test(e.kind)) {
+      return res.status(400).json({ error: 'invalid event', event: e });
+    }
+    const detail = typeof e.detail === 'string' ? e.detail.slice(0, 2000) : null;
+    cleaned.push({ clientId, time, kind: e.kind, detail });
+  }
+  res.json({ accepted: db.insertTrackingEvents(req.device.id, cleaned) });
+});
+
 // Goal management for the phone (same device-token auth as above).
 router.use(goals.router);
 

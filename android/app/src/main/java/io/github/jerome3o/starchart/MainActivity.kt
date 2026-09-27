@@ -64,7 +64,7 @@ class MainActivity : AppCompatActivity() {
         val trackingEnabled = Prefs.get(this).getBoolean(Prefs.KEY_TRACKING_ENABLED, false) &&
             Permissions.hasLocation(this)
         if (trackingEnabled && !LocationService.running) {
-            ContextCompat.startForegroundService(this, Intent(this, LocationService::class.java))
+            LocationService.start(this, "app_opened")
         }
     }
 

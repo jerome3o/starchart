@@ -24,6 +24,7 @@ object Sync {
     private const val KEY_LAST_SYNC_TIME = "last_sync_time"
     private const val KEY_UPLOADED = "uploaded_count"
     private const val KEY_LAST_ERROR = "last_error"
+    private const val KEY_LAST_EVENT_ID = "last_event_id"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -93,6 +94,7 @@ object Sync {
                 val accepted = uploadFixes(token, batch)
                 recordProgress(context, batch.last().id, accepted)
             }
+            uploadEvents(context, token, db)
             recordSuccess(context)
             Outcome.OK
         } catch (e: UnauthorizedException) {
@@ -107,6 +109,27 @@ object Sync {
     }
 
     private const val BATCH_SIZE = 500
+
+    /** Tracking diagnostics, uploaded after the fixes they explain. */
+    private fun uploadEvents(context: Context, token: String, db: LocationDb) {
+        while (true) {
+            val batch = db.eventsAfter(prefs(context).getLong(KEY_LAST_EVENT_ID, 0L), BATCH_SIZE)
+            if (batch.isEmpty()) return
+            val body = JSONObject().put("events", JSONArray().apply {
+                batch.forEach { e ->
+                    put(
+                        JSONObject()
+                            .put("clientId", e.id)
+                            .put("time", e.timeMs)
+                            .put("kind", e.kind)
+                            .put("detail", e.detail ?: JSONObject.NULL)
+                    )
+                }
+            })
+            request("POST", "/api/events", token, body)
+            prefs(context).edit().putLong(KEY_LAST_EVENT_ID, batch.last().id).apply()
+        }
+    }
 
     /** Uploads a batch of fixes; returns the number the server newly accepted. */
     fun uploadFixes(token: String, fixes: List<LocationDb.StoredFix>): Int {

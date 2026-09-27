@@ -83,6 +83,11 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <!-- Exact-alarm watchdog that restarts tracking / fetches a fix if it goes quiet. -->
+        <receiver
+            android:name=".TrackingWatchdog"
+            android:exported="false" />
+
         <!-- Both are protected broadcasts; only the system can send them. -->
         <receiver
             android:name=".BootReceiver"

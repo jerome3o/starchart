@@ -2,12 +2,16 @@ package io.github.jerome3o.starchart
 
 import android.Manifest
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -22,7 +26,8 @@ import java.util.concurrent.Executors
  * Foreground service that records a location fix roughly every minute into
  * the local SQLite database. Balanced-power priority plus batching keeps the
  * battery cost low while the persistent notification keeps the OS from
- * killing it.
+ * killing it. Starts, stops and Doze transitions go to [TrackingLog], and
+ * [TrackingWatchdog] restarts it (or grabs a fix) if it goes quiet.
  */
 class LocationService : Service() {
 
@@ -54,25 +59,54 @@ class LocationService : Service() {
         uploader.execute { Sync.uploadPending(this) }
     }
 
+    private val powerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val pm = getSystemService(PowerManager::class.java)
+            when (intent.action) {
+                PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED ->
+                    TrackingLog.log(context, if (pm.isDeviceIdleMode) "doze_on" else "doze_off")
+                PowerManager.ACTION_POWER_SAVE_MODE_CHANGED ->
+                    TrackingLog.log(context, if (pm.isPowerSaveMode) "battery_saver_on" else "battery_saver_off")
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         db = LocationDb(this)
         fused = LocationServices.getFusedLocationProviderClient(this)
+        TrackingLog.recordProcessExits(this)
+        registerReceiver(powerReceiver, IntentFilter().apply {
+            addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
+            addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+        })
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            Notifications.serviceNotification(
+        // A null intent means Android restarted us after killing the process.
+        val reason = intent?.getStringExtra(EXTRA_REASON) ?: if (intent == null) "sticky_restart" else "unknown"
+        try {
+            ServiceCompat.startForeground(
                 this,
-                getString(R.string.location_notification_title),
-                getString(R.string.location_notification_text)
-            ),
-            if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
-        )
+                NOTIFICATION_ID,
+                Notifications.serviceNotification(
+                    this,
+                    getString(R.string.location_notification_title),
+                    getString(R.string.location_notification_text)
+                ),
+                if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+            )
+        } catch (e: Exception) {
+            // Android 12+ refuses foreground starts from the background in many
+            // cases (including some sticky restarts); the watchdog retries.
+            TrackingLog.log(this, "start_failed", "$reason: ${e.javaClass.simpleName}: ${e.message}")
+            TrackingWatchdog.schedule(this)
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         if (!hasLocationPermission()) {
+            TrackingLog.log(this, "start_failed", "$reason: no location permission")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -91,11 +125,20 @@ class LocationService : Service() {
             return START_NOT_STICKY
         }
 
+        if (!running) TrackingLog.log(this, "service_started", "$reason; ${TrackingLog.powerState(this)}")
         running = true
+        TrackingWatchdog.schedule(this)
         return START_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        TrackingLog.log(this, "task_removed")
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        if (running) TrackingLog.log(this, "service_stopped")
+        try { unregisterReceiver(powerReceiver) } catch (_: Exception) {}
         fused.removeLocationUpdates(callback)
         uploader.shutdown()
         running = false
@@ -113,6 +156,15 @@ class LocationService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 101
         private const val INTERVAL_MS = 60_000L
+        private const val EXTRA_REASON = "reason"
+
+        /** Starts (or pokes) tracking; [reason] is logged for diagnostics. */
+        fun start(context: Context, reason: String) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, LocationService::class.java).putExtra(EXTRA_REASON, reason)
+            )
+        }
 
         @Volatile
         var running = false
