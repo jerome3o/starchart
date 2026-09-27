@@ -77,7 +77,39 @@ class SettingsFragment : Fragment() {
         setUpSync(view)
         setUpNotificationButtons(view)
         setUpDailyReminderSwitch(view)
+        setUpNudgesSwitch(view)
         setUpOverlaySwitch(view)
+    }
+
+    /** Claude's hourly nudges live on the server; this mirrors and flips the setting. */
+    private fun setUpNudgesSwitch(view: View) {
+        val switch = view.findViewById<MaterialSwitch>(R.id.switch_nudges)
+        val status = view.findViewById<TextView>(R.id.nudges_status)
+        val app = requireContext().applicationContext
+        switch.isEnabled = false
+        fun apply(body: org.json.JSONObject?) {
+            Thread {
+                val result = try {
+                    if (body == null) Sync.call(app, "GET", "/api/settings") else Sync.call(app, "POST", "/api/settings", body)
+                } catch (_: Exception) { null }
+                view.post {
+                    if (!isAdded) return@post
+                    if (result == null) {
+                        status.text = getString(R.string.nudges_unavailable)
+                        return@post
+                    }
+                    switch.setOnCheckedChangeListener(null)
+                    switch.isChecked = result.optBoolean("nudges_enabled", true)
+                    switch.isEnabled = result.optBoolean("claude_enabled", false)
+                    status.text = getString(if (result.optBoolean("claude_enabled", false)) R.string.nudges_explain else R.string.nudges_no_key)
+                    switch.setOnCheckedChangeListener { _, checked ->
+                        switch.isEnabled = false
+                        apply(org.json.JSONObject().put("nudges_enabled", checked))
+                    }
+                }
+            }.start()
+        }
+        if (Sync.isLinked(app)) apply(null) else status.text = getString(R.string.nudges_unavailable)
     }
 
     override fun onResume() {

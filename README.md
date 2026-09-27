@@ -180,6 +180,27 @@ location — whatever the token's scopes allow). Listed tool schemas omit
 boolean sub-schemas (`additionalProperties: false`) because the Gemini SDK's
 converter crashes on them; arguments are still validated server-side.
 
+## Claude in the app: chat and nudges
+
+Needs an `ANTHROPIC_API_KEY` GitHub Actions secret (the deploy stages it on
+Fly; without it both features stay off).
+
+- **Chat tab:** `POST /api/chat` (device token) runs Claude Opus 5 with
+  every Starchart MCP tool — goals, nudges, location, gap diagnostics and
+  phone commands — through an in-process MCP client (`claude.js`), so the
+  chat and external MCP clients share one tool implementation. The app keeps
+  the transcript locally.
+- **Goal descriptions:** each goal has a free-text "what and why", editable
+  in the app and via MCP (`update_goal`). Chat and nudges use it.
+- **Nudges (`nudges.js`):** five minutes past every hour, for each goal
+  that's behind, Claude Haiku 4.5 decides (structured output) whether now is
+  a good moment. If so, Claude Opus 5 writes a sassy notification, which is
+  queued as a `notify` phone command. Hard limits: 8am–10pm local time, at
+  most 5 a day, 4 hours apart per goal, one per hour. Toggle in the app's
+  Settings or with `set_nudges_enabled`; history via `get_recent_nudges`.
+- Opus requests opt into server-side refusal fallbacks
+  (`fallbacks: "default"`).
+
 ## Gemini on the phone (Android App Functions)
 
 The app exposes [App Functions](https://developer.android.com/ai/appfunctions)

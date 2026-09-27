@@ -11,8 +11,8 @@ import androidx.core.content.ContextCompat
 import com.google.android.material.bottomnavigation.BottomNavigationView
 
 /**
- * Shell activity: bottom tabs for the star chart, the map and settings. The
- * three fragments are created once and shown/hidden so the map keeps its
+ * Shell activity: bottom tabs for the star chart, chat, the map and settings.
+ * The fragments are created once and shown/hidden so the map keeps its
  * state when switching tabs.
  */
 class MainActivity : AppCompatActivity() {
@@ -36,6 +36,7 @@ class MainActivity : AppCompatActivity() {
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
                 .add(R.id.fragment_container, StarChartFragment(), TAG_STARCHART)
+                .add(R.id.fragment_container, ChatFragment(), TAG_CHAT)
                 .add(R.id.fragment_container, MapFragment(), TAG_MAP)
                 .add(R.id.fragment_container, SettingsFragment(), TAG_SETTINGS)
                 .commitNow()
@@ -71,13 +72,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun showTab(itemId: Int) {
         val selected = when (itemId) {
+            R.id.nav_chat -> TAG_CHAT
             R.id.nav_map -> TAG_MAP
             R.id.nav_settings -> TAG_SETTINGS
             else -> TAG_STARCHART
         }
         val fm = supportFragmentManager
         val tx = fm.beginTransaction()
-        for (tag in listOf(TAG_STARCHART, TAG_MAP, TAG_SETTINGS)) {
+        for (tag in listOf(TAG_STARCHART, TAG_CHAT, TAG_MAP, TAG_SETTINGS)) {
             val fragment = fm.findFragmentByTag(tag) ?: continue
             if (tag == selected) tx.show(fragment) else tx.hide(fragment)
         }
@@ -99,6 +101,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG_STARCHART = "starchart"
+        private const val TAG_CHAT = "chat"
         private const val TAG_MAP = "map"
         private const val TAG_SETTINGS = "settings"
     }

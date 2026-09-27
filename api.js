@@ -2,6 +2,7 @@
 
 const express = require('express');
 const db = require('./db');
+const claude = require('./claude');
 const createLimiter = require('./ratelimit');
 const goals = require('./goals');
 
@@ -97,6 +98,32 @@ router.post('/commands/:id/result', (req, res) => {
   const body = req.body || {};
   const updated = db.completePhoneCommand(req.device.id, id, body.ok !== false, body.result);
   res.json({ updated });
+});
+
+// In-app chat with Claude (all MCP tools, as this device's user).
+router.post('/chat', async (req, res) => {
+  if (!claude.enabled()) return res.status(503).json({ error: 'chat is not configured (no ANTHROPIC_API_KEY on the server)' });
+  const history = Array.isArray(req.body && req.body.messages) ? req.body.messages : null;
+  const valid = history && history.length > 0 && history.length <= 200 && history.every((m) =>
+    m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.length <= 20000)
+    && history[history.length - 1].role === 'user';
+  if (!valid) return res.status(400).json({ error: 'expected {messages: [{role, content}]} ending with a user message' });
+  try {
+    res.json(await claude.chat(req.device.email, req.device.label, history));
+  } catch (e) {
+    console.error('[chat]', e);
+    res.status(502).json({ error: `Claude request failed: ${e.message}` });
+  }
+});
+
+router.get('/settings', (req, res) => {
+  res.json({ nudges_enabled: db.nudgesEnabled(req.device.email), claude_enabled: claude.enabled() });
+});
+
+router.post('/settings', (req, res) => {
+  const body = req.body || {};
+  if (typeof body.nudges_enabled === 'boolean') db.setNudgesEnabled(req.device.email, body.nudges_enabled);
+  res.json({ nudges_enabled: db.nudgesEnabled(req.device.email), claude_enabled: claude.enabled() });
 });
 
 // Goal management for the phone (same device-token auth as above).

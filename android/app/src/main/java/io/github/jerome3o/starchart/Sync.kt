@@ -155,17 +155,17 @@ object Sync {
     }
 
     /** Authenticated JSON call to the server; throws on non-2xx. */
-    fun call(context: Context, method: String, path: String, body: JSONObject? = null): JSONObject {
+    fun call(context: Context, method: String, path: String, body: JSONObject? = null, readTimeoutMs: Int = 30_000): JSONObject {
         val token = token(context) ?: throw UnauthorizedException()
-        return request(method, path, token, body)
+        return request(method, path, token, body, readTimeoutMs)
     }
 
-    private fun request(method: String, path: String, token: String, body: JSONObject?): JSONObject {
+    private fun request(method: String, path: String, token: String, body: JSONObject?, readTimeoutMs: Int = 30_000): JSONObject {
         val connection = URL(SERVER_URL + path).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method
             connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
+            connection.readTimeout = readTimeoutMs
             connection.setRequestProperty("Authorization", "Bearer $token")
             if (body != null) {
                 connection.setRequestProperty("Content-Type", "application/json")
