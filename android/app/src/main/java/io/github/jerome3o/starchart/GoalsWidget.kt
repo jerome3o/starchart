@@ -8,7 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.RemoteViews
-import android.widget.RemoteViewsService
+import android.view.View
 import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
@@ -20,16 +20,21 @@ import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * Home-screen widget: every goal with its count and a pace bar (fill = done,
- * lighter band = expected by now), plus a "+" per goal that logs a completion
- * without opening the app. Reads the app's cached goal snapshot, refreshed by
- * the app itself and by a 30-minute background worker.
+ * Home-screen widget: every goal with its count and a pace bar (now-line,
+ * notches, expected-by-now band), plus a "+" per goal that opens the slider.
+ * Rows are drawn straight into the widget's layout on every update — no
+ * collection adapter, so there is no launcher-side row cache to go stale.
+ * Reads the app's cached goal snapshot; re-renders whenever that changes,
+ * every 30 minutes via the system timer, and after background fetches.
  */
 class GoalsWidgetProvider : AppWidgetProvider() {
 
@@ -40,7 +45,6 @@ class GoalsWidgetProvider : AppWidgetProvider() {
 
     override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: android.os.Bundle) {
         manager.updateAppWidget(id, buildViews(context, id))
-        manager.notifyAppWidgetViewDataChanged(intArrayOf(id), R.id.widget_list)
     }
 
     override fun onEnabled(context: Context) {
@@ -65,10 +69,8 @@ class GoalsWidgetProvider : AppWidgetProvider() {
         private fun schedulePeriodicRefresh(context: Context) {
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 REFRESH_WORK,
-                ExistingPeriodicWorkPolicy.KEEP,
-                PeriodicWorkRequestBuilder<WidgetRefreshWorker>(30, TimeUnit.MINUTES)
-                    .setConstraints(networkConstraint())
-                    .build()
+                ExistingPeriodicWorkPolicy.UPDATE,
+                PeriodicWorkRequestBuilder<WidgetRefreshWorker>(30, TimeUnit.MINUTES).build()
             )
         }
 
@@ -102,47 +104,49 @@ class GoalsWidgetProvider : AppWidgetProvider() {
             val ids = manager.getAppWidgetIds(ComponentName(context, GoalsWidgetProvider::class.java))
             if (ids.isEmpty()) return
             for (id in ids) manager.updateAppWidget(id, buildViews(context, id))
-            manager.notifyAppWidgetViewDataChanged(ids, R.id.widget_list)
         }
 
         private fun buildViews(context: Context, widgetId: Int): RemoteViews {
             val views = RemoteViews(context.packageName, R.layout.widget_goals)
+            val d = context.resources.displayMetrics.density
+            val options = AppWidgetManager.getInstance(context).getAppWidgetOptions(widgetId)
+            val widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).takeIf { it > 0 } ?: 300
+            val heightDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0).takeIf { it > 0 } ?: 180
 
             val snapshot = GoalsApi.cached(context)
+            val zone = ZoneId.systemDefault()
+            val now = System.currentTimeMillis()
             val period = snapshot?.periods?.get(14) ?: snapshot?.periods?.values?.firstOrNull()
+            val synced = GoalsApi.cachedAt(context)
             views.setTextViewText(
                 R.id.widget_period,
                 if (period == null) "" else {
-                    val fmt = DateTimeFormatter.ofPattern("MMM d")
-                    context.getString(
-                        R.string.widget_period,
-                        period.dayOfPeriod + 1, period.days,
-                        LocalDate.parse(period.endDate).format(fmt),
-                    )
+                    val start = LocalDate.parse(period.startDate)
+                    val day = (ChronoUnit.DAYS.between(start, LocalDate.now(zone)) + 1).coerceIn(1, period.days.toLong())
+                    val syncedText = if (synced > 0) DateTimeFormatter.ofPattern("HH:mm")
+                        .format(Instant.ofEpochMilli(synced).atZone(zone)) else "—"
+                    context.getString(R.string.widget_period, day.toInt(), period.days, syncedText)
                 }
             )
+
+            val goals = snapshot?.goals ?: emptyList()
+            views.removeAllViews(R.id.widget_list)
+            views.setViewVisibility(R.id.widget_empty, if (goals.isEmpty()) View.VISIBLE else View.GONE)
             views.setTextViewText(
                 R.id.widget_empty,
                 context.getString(if (Sync.isLinked(context)) R.string.widget_empty else R.string.goals_unlinked)
             )
 
-            // The list adapter; the data URI makes each widget's intent distinct.
-            val serviceIntent = Intent(context, GoalsWidgetService::class.java).apply {
-                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
-                data = Uri.parse(toUri(Intent.URI_INTENT_SCHEME))
+            // As many rows as fit (~50dp each under a ~34dp header), then "+N more".
+            val fits = ((heightDp - 28 - 34) / 50).coerceAtLeast(1)
+            val shown = if (goals.size > fits) goals.take((fits - 1).coerceAtLeast(1)) else goals
+            val barWidthPx = ((widthDp - 28 - 44) * d).toInt()
+            for (g in shown) {
+                views.addView(R.id.widget_list, rowViews(context, g, snapshot!!, barWidthPx, now, zone))
             }
-            views.setRemoteAdapter(R.id.widget_list, serviceIntent)
-            views.setEmptyView(R.id.widget_list, R.id.widget_empty)
-
-            // Rows and "+" buttons fill in the goal id and mode on this template;
-            // the transparent activity plays the charge/celebration over the home screen.
-            val actionTemplate = PendingIntent.getActivity(
-                context, 0,
-                Intent(context, WidgetActionActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-            )
-            views.setPendingIntentTemplate(R.id.widget_list, actionTemplate)
+            val hidden = goals.size - shown.size
+            views.setViewVisibility(R.id.widget_more, if (hidden > 0) View.VISIBLE else View.GONE)
+            views.setTextViewText(R.id.widget_more, context.getString(R.string.widget_more, hidden))
 
             val open = PendingIntent.getActivity(
                 context, 0,
@@ -151,66 +155,50 @@ class GoalsWidgetProvider : AppWidgetProvider() {
             )
             views.setOnClickPendingIntent(R.id.widget_header, open)
             views.setOnClickPendingIntent(R.id.widget_empty, open)
+            views.setOnClickPendingIntent(R.id.widget_more, open)
             return views
         }
-    }
-}
 
-class GoalsWidgetService : RemoteViewsService() {
-    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory = Factory(
-        applicationContext,
-        intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID),
-    )
-
-    private class Factory(private val context: Context, private val widgetId: Int) : RemoteViewsService.RemoteViewsFactory {
-        private var goals: List<GoalsApi.Goal> = emptyList()
-        private var fractions: Map<Int, Double> = emptyMap()
-        private var barWidthPx = 0
-
-        override fun onCreate() = Unit
-        override fun onDestroy() = Unit
-
-        override fun onDataSetChanged() {
-            val snap = GoalsApi.cached(context)
-            goals = snap?.goals ?: emptyList()
-            fractions = snap?.periods?.mapValues { it.value.fraction } ?: emptyMap()
-            barWidthPx = barWidth()
-        }
-
-        /** Bar width from the widget's current size: minus padding and the + button. */
-        private fun barWidth(): Int {
-            val d = context.resources.displayMetrics.density
-            val options = AppWidgetManager.getInstance(context).getAppWidgetOptions(widgetId)
-            val widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0).takeIf { it > 0 } ?: 300
-            return ((widthDp - 28 - 44) * d).toInt()
-        }
-
-        override fun getCount() = goals.size
-        override fun getItemId(position: Int) = goals[position].id
-        override fun hasStableIds() = true
-        override fun getViewTypeCount() = 1
-        override fun getLoadingView(): RemoteViews? = null
-
-        override fun getViewAt(position: Int): RemoteViews {
-            val g = goals[position]
-            val views = RemoteViews(context.packageName, R.layout.widget_goal_item)
-            views.setTextViewText(R.id.widget_goal_name, "${g.emoji ?: "⭐"}  ${g.name}")
+        private fun rowViews(
+            context: Context, g: GoalsApi.Goal, snapshot: GoalsApi.Snapshot,
+            barWidthPx: Int, now: Long, zone: ZoneId,
+        ): RemoteViews {
+            val row = RemoteViews(context.packageName, R.layout.widget_goal_item)
+            row.setTextViewText(R.id.widget_goal_name, "${g.emoji ?: "⭐"}  ${g.name}")
             val target = if (g.target == Math.floor(g.target)) g.target.toLong().toString() else g.target.toString()
-            views.setTextViewText(R.id.widget_goal_count, "${g.count}/$target")
-            val behind = g.isBehind && !g.complete
-            views.setTextColor(
-                R.id.widget_goal_count,
-                ContextCompat.getColor(context, if (behind) R.color.widget_behind else R.color.widget_text)
+            row.setTextViewText(R.id.widget_goal_count, "${g.count}/$target")
+
+            // "Now" and pace from the period dates and the clock, so they keep
+            // moving between syncs; count comes from the last snapshot.
+            val start = LocalDate.parse(g.periodStart).atStartOfDay(zone).toInstant().toEpochMilli()
+            val length = g.periodDays * 86_400_000.0
+            val fraction = ((now - start) / length).coerceIn(0.0, 1.0)
+            val elapsedDays = (fraction * g.periodDays - g.hoursOffset / 24).coerceAtLeast(0.0)
+            val expected = g.target * elapsedDays / g.periodDays
+            val live = g.copy(
+                targetByNow = expected,
+                status = if (g.count < expected) "behind" else "on_track",
             )
+            row.setTextColor(
+                R.id.widget_goal_count,
+                ContextCompat.getColor(context, if (live.isBehind && !live.complete) R.color.widget_behind else R.color.widget_text)
+            )
+            row.setImageViewBitmap(R.id.widget_goal_bar, WidgetBarRenderer.render(context, barWidthPx, live, fraction))
 
-            val fraction = fractions[g.periodDays] ?: 0.0
-            views.setImageViewBitmap(R.id.widget_goal_bar, WidgetBarRenderer.render(context, barWidthPx, g, fraction))
-
-            // Both open the slider card: completions are only ever logged by sliding.
-            val openSlider = Intent().putExtra(GoalsWidgetProvider.EXTRA_GOAL_ID, g.id)
-            views.setOnClickFillInIntent(R.id.widget_goal_plus, openSlider)
-            views.setOnClickFillInIntent(R.id.widget_goal_row, openSlider)
-            return views
+            // Row and "+" both open the slider for this goal: completions are
+            // only ever logged by sliding. Distinct data URIs keep one
+            // PendingIntent per goal.
+            val slider = PendingIntent.getActivity(
+                context, g.id.toInt(),
+                Intent(context, WidgetActionActivity::class.java)
+                    .setData(Uri.parse("starchart://widget/goal/${g.id}"))
+                    .putExtra(EXTRA_GOAL_ID, g.id)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            row.setOnClickPendingIntent(R.id.widget_goal_row, slider)
+            row.setOnClickPendingIntent(R.id.widget_goal_plus, slider)
+            return row
         }
     }
 }
@@ -218,13 +206,13 @@ class GoalsWidgetService : RemoteViewsService() {
 /** Background refresh of the goal snapshot the widget shows. */
 class WidgetRefreshWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result {
-        if (!Sync.isLinked(applicationContext)) return Result.success()
-        return try {
-            GoalsApi.fetch(applicationContext)
-            Result.success()
-        } catch (_: Exception) {
-            Result.retry()
+        // Fetch if we can (which re-renders); either way re-render so the
+        // now-line and pace keep moving while offline.
+        if (Sync.isLinked(applicationContext) && Sync.hasNetwork(applicationContext)) {
+            try { GoalsApi.fetch(applicationContext) } catch (_: Exception) {}
         }
+        GoalsWidgetProvider.refresh(applicationContext)
+        return Result.success()
     }
 }
 
