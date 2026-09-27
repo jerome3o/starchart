@@ -17,10 +17,16 @@ const MAX_PER_DAY = 5;
 const HOUR_MS = 3600e3;
 
 const pad = (n) => String(n).padStart(2, '0');
-const localLabel = (ms, tz) => {
-  const p = time.localParts(ms, tz);
-  return `${p.weekday} ${pad(p.hour)}:${pad(p.minute)}`;
-};
+// "today 07:01", "yesterday 19:12", "3 days ago (Thu 07:01)" — unambiguous for the models.
+function relativeLabel(ms, tz, nowMs = Date.now()) {
+  const a = time.localParts(ms, tz);
+  const b = time.localParts(nowMs, tz);
+  const days = time.daysBetween(a.year, a.month, a.day, b.year, b.month, b.day);
+  const hm = `${pad(a.hour)}:${pad(a.minute)}`;
+  if (days === 0) return `today ${hm}`;
+  if (days === 1) return `yesterday ${hm}`;
+  return `${days} days ago (${a.weekday} ${hm})`;
+}
 
 /** Candidate goals for one user right now, with the context the models see. */
 function candidates(email, nowMs = Date.now()) {
@@ -53,8 +59,9 @@ function candidates(email, nowMs = Date.now()) {
         period_days: g.period_days,
         days_left: g.days_left,
         done_today: recent.some((t) => t >= today),
-        recent_completions_local: recent.map((t) => localLabel(t, tz)),
-        nudges_about_this_goal_today: sentToday.filter((n) => n.goal_id === g.id).map((n) => `${localLabel(n.time, tz)}: ${n.text}`),
+        last_done: recent.length ? relativeLabel(recent[0], tz, nowMs) : 'never',
+        recent_completions: recent.map((t) => relativeLabel(t, tz, nowMs)),
+        nudges_about_this_goal_today: sentToday.filter((n) => n.goal_id === g.id).map((n) => `${relativeLabel(n.time, tz, nowMs)}: ${n.text}`),
         nudges_today_all_goals: sentToday.length,
       },
     });

@@ -10,7 +10,7 @@
     <string name="chat_new">New chat</string>
     <string name="chat_hint">Ask Claude anything…</string>
     <string name="chat_send">Send</string>
-    <string name="chat_thinking">…</string>
+    <string name="chat_thinking">Thinking…</string>
     <string name="chat_not_linked">Link the app to the server first (Settings → Link to server).</string>
     <string name="hint_goal_description">What is it and why? (Claude uses this)</string>
     <string name="app_function_description">Check habit goal progress and open the slider to log a goal.</string>

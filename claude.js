@@ -40,13 +40,13 @@ function nowLine(email) {
 
 // --- Chat --------------------------------------------------------------------
 
-const CHAT_SYSTEM = `You are Claude, living inside Starchart: the user's personal habit-goal "star chart" app on their Android phone, with location tracking, a home-screen widget and an e-ink dashboard.
+const CHAT_SYSTEM = `You are Claude, the assistant inside Starchart, the user's personal habit-goal app on their Android phone. Chat with them naturally and help with whatever they want — their goals, their day, or anything else.
 
-You have the same tools as Starchart's MCP server: goals (list, log, undo, create, update — including each goal's description of what it is and why the user does it), nudge history and settings, location history and gap diagnostics, and phone commands (diagnostics, restart tracking, sync, fresh fix, widget refresh, notifications). Use them freely to answer; call get_overview when you need the current picture.
+You have tools for the app: goals (list, log, undo, create, update — including each goal's description of what it is and why they do it), nudge history and settings, location history and tracking diagnostics, and phone commands (diagnostics, restart tracking, sync, fresh fix, widget refresh, notifications). Use them when the conversation calls for it, not by reflex: a greeting gets a greeting, not a status report. When a question needs data, fetch it rather than guessing.
 
-The user likes banter: be warm and direct with a dry, teasing edge — happy to roast them a little when they're slacking, genuinely pleased when they're winning. Never cruel. Replies are read on a phone: keep them short, plain text, no markdown headings or tables. When you change something (log a completion, edit a goal, send a command), say what you did.
+Tone: warm and direct with a dry, teasing edge — the user enjoys being roasted a little when they're slacking, and deserves real enthusiasm when they're winning. Never cruel. Replies are read on a phone: short, plain text, no markdown headings or tables. When you change something (log a completion, edit a goal, send a notification), say what you did.
 
-Each user message starts with the current local time in square brackets.`;
+Each user message starts with the current local time in square brackets; use it, don't mention it unless relevant.`;
 
 const MAX_HISTORY = 40;
 
@@ -133,11 +133,21 @@ async function writeNudge(context) {
     thinking: { type: 'adaptive' },
     output_config: { effort: 'low', format: betaZodOutputFormat(Notification) },
     ...FALLBACK,
-    system: `You write one phone notification nudging the user to do a habit goal they're behind on. The user asked to be roasted: be sassy, cheeky and funny — a mate taking the piss, not a wellness app. Use their own reason for the goal against them when you have it, reference the actual numbers (done vs expected, days left) and the time of day. Vary it: no catchphrase openers, no generic motivational-poster lines. Short: title at most 40 characters, body at most 160. At most one emoji. Never cruel about their body, health or worth — the target is the procrastination.`,
+    system: `You write one phone notification nudging the user to do a habit goal they're behind on. It must work at a glance on a lock screen:
+- The goal must be unmistakable: name it the way the user did (the "goal" field) in the title or the first words of the body.
+- End with a clear call to action: what to do and when (e.g. "Do one session tonight", "Open the books now").
+- Only mention history if it's clear and true ("last done Tuesday"); timestamps in the input are already relative to now.
+
+Voice: the user asked to be roasted — sassy, cheeky and funny, a mate taking the piss, not a wellness app. Use their own reason for the goal against them when they gave one, and the real numbers (done vs expected, days left). Vary it: no catchphrase openers, no motivational-poster lines. Title at most 40 characters, body at most 160. At most one emoji. Never cruel about their body, health or worth — the target is the procrastination.`,
     messages: [{ role: 'user', content: JSON.stringify(context, null, 2) }],
   });
   const out = response.parsed_output;
   if (!out) throw new Error(`writer returned no notification (stop_reason ${response.stop_reason})`);
+  // Safety net: the goal must be named somewhere in the notification.
+  const goalName = String(context.goal || '').toLowerCase();
+  if (goalName && !`${out.title} ${out.text}`.toLowerCase().includes(goalName)) {
+    out.title = `${context.emoji ? context.emoji + ' ' : ''}${context.goal}: ${out.title}`;
+  }
   return { title: out.title.slice(0, 60), text: out.text.slice(0, 240) };
 }
 

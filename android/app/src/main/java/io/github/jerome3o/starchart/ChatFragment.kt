@@ -94,16 +94,23 @@ class ChatFragment : Fragment() {
     private fun getStringSafe(e: Exception) =
         (e.message ?: e.javaClass.simpleName).let { if (it.contains("503")) "Chat isn't set up on the server yet (no Anthropic API key)." else "Couldn't reach Claude: $it" }
 
+    // While waiting, a "thinking" bubble sits at the end of the list.
     private fun setBusy(value: Boolean) {
+        if (busy == value) return
         busy = value
         send.isEnabled = !value
-        send.text = getString(if (value) R.string.chat_thinking else R.string.chat_send)
+        if (value) {
+            adapter.notifyItemInserted(messages.size)
+            list.scrollToPosition(messages.size)
+        } else {
+            adapter.notifyItemRemoved(messages.size)
+        }
     }
 
     private fun append(message: Message) {
         messages += message
         adapter.notifyItemInserted(messages.size - 1)
-        list.scrollToPosition(messages.size - 1)
+        list.scrollToPosition(messages.size - 1 + if (busy) 1 else 0)
     }
 
     private fun load() {
@@ -127,7 +134,7 @@ class ChatFragment : Fragment() {
     }
 
     private val adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-        override fun getItemCount() = messages.size
+        override fun getItemCount() = messages.size + if (busy) 1 else 0
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
             val density = parent.resources.displayMetrics.density
@@ -156,7 +163,7 @@ class ChatFragment : Fragment() {
         }
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-            val m = messages[position]
+            val m = messages.getOrNull(position) ?: Message("assistant", getString(R.string.chat_thinking))
             val row = holder.itemView as FrameLayout
             val bubble = row.getChildAt(0) as LinearLayout
             val text = bubble.getChildAt(0) as TextView
