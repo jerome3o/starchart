@@ -64,6 +64,15 @@ class LocationDb(context: Context) :
         })
     }
 
+    fun recentEvents(limit: Int): List<Event> =
+        readableDatabase.rawQuery(
+            "SELECT id, time, kind, detail FROM events ORDER BY time DESC LIMIT ?", arrayOf(limit.toString())
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) add(Event(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3)))
+            }
+        }
+
     fun eventsAfter(id: Long, limit: Int): List<Event> =
         readableDatabase.rawQuery(
             "SELECT id, time, kind, detail FROM events WHERE id > ? ORDER BY id ASC LIMIT ?",

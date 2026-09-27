@@ -15,7 +15,10 @@ const SCOPES = {
   'location:read': 'Read your location history',
   'goals:read': 'See your goals and progress',
   'goals:write': 'Log, undo and create goals',
+  'phone:control': 'Diagnose and fix the Starchart app on your phone (fixed command list: diagnostics, restart tracking, sync, fresh fix, widget refresh, notifications)',
 };
+// Scopes a client only gets if the consent box is ticked (unticked by default).
+const OPT_IN_SCOPES = new Set(['phone:control']);
 const ALL_SCOPES = Object.keys(SCOPES).join(' ');
 
 function base64url(buffer) {
@@ -140,13 +143,15 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
       state: q.state ? String(q.state) : null,
       resource: q.resource ? String(q.resource) : null,
     };
-    const scopeList = scope.split(' ').map((s) => `<li>${escapeHtml(SCOPES[s])}</li>`).join('');
+    const scopeList = scope.split(' ').map((s) => `<li style="list-style:none"><label>
+        <input type="checkbox" name="scope" value="${s}" ${OPT_IN_SCOPES.has(s) ? '' : 'checked'} />
+        ${escapeHtml(SCOPES[s])}${OPT_IN_SCOPES.has(s) ? ' <strong>(opt-in)</strong>' : ''}</label></li>`).join('');
     res.send(page('Connect — Starchart', `
       <h1>🔗 Connect ${escapeHtml(client.client_name)}</h1>
       <p><strong>${escapeHtml(client.client_name)}</strong> wants access to your Starchart data as
       <strong>${escapeHtml(req.session.user.email)}</strong>:</p>
-      <ul style="text-align:left">${scopeList}</ul>
       <form method="POST" action="/oauth/authorize/decision" style="display:inline">
+        <ul style="text-align:left">${scopeList}</ul>
         <input type="hidden" name="csrf" value="${csrf}" />
         <button class="btn" name="decision" value="approve" type="submit">Allow</button>
         <button class="btn" name="decision" value="deny" type="submit" style="background:#7a3b3b">Deny</button>
@@ -166,11 +171,18 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
       url.searchParams.set('error', 'access_denied');
       return res.redirect(url.toString());
     }
+    // Only the requested scopes the user left ticked.
+    const ticked = new Set([].concat(req.body.scope || []).map(String));
+    const scope = consent.scope.split(' ').filter((s) => ticked.has(s)).join(' ');
+    if (!scope) {
+      url.searchParams.set('error', 'access_denied');
+      return res.redirect(url.toString());
+    }
     const code = db.createAuthCode({
       clientId: consent.clientId,
       redirectUri: consent.redirectUri,
       codeChallenge: consent.codeChallenge,
-      scope: consent.scope,
+      scope,
       email: req.session.user.email,
       resource: consent.resource,
     });

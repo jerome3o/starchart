@@ -303,6 +303,7 @@ app.get('/', requireAuth, (req, res) => {
           (g) => `<li style="text-align:left;margin:.5rem 0;">
             <strong>${g.client_name.replace(/[<>&]/g, '')}</strong> —
             connected ${fmt(g.first_connected)}, last used ${fmt(g.last_used)}
+            ${String(g.scopes || '').includes('phone:control') ? '— <strong>can run phone commands</strong>' : ''}
             <form method="POST" action="/oauth/grants/${g.client_id}/revoke" style="display:inline">
               <button class="btn" style="padding:.15rem .6rem;font-size:.8rem;background:#7a3b3b" type="submit">Revoke</button>
             </form>
@@ -312,6 +313,12 @@ app.get('/', requireAuth, (req, res) => {
     : `<li>None. MCP endpoint: <code>${issuer}/mcp</code></li>`;
   const esc = (s) => String(s ?? '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   const smallBtn = 'padding:.15rem .6rem;font-size:.8rem;margin-top:0';
+  const commands = db.listPhoneCommands(u.email, 15);
+  const commandRows = commands.length
+    ? commands.map((c) => `<li style="text-align:left;margin:.3rem 0;">
+        <code>${esc(c.command)}</code> — ${esc(c.status)}, ${fmt(c.created_at)} by ${esc(c.requested_by || 'unknown')}
+      </li>`).join('')
+    : '<li>None yet. Apps granted “phone:control” can run a fixed list of diagnostic/fix commands.</li>';
   const tokens = db.listApiTokens(u.email);
   const tokenRows = tokens.length
     ? tokens.map((t) => `<li style="text-align:left;margin:.5rem 0;">
@@ -322,7 +329,7 @@ app.get('/', requireAuth, (req, res) => {
       </li>`).join('')
     : '<li>None. For MCP clients that can\'t sign in with Google, like the Gemini API.</li>';
   const scopeBoxes = Object.entries(SCOPES).map(([k, label]) =>
-    `<label style="margin-right:.6rem;white-space:nowrap"><input type="checkbox" name="scope" value="${k}" ${k === 'goals:write' ? '' : 'checked'} /> ${esc(label)}</label>`).join(' ');
+    `<label style="margin-right:.6rem;white-space:nowrap"><input type="checkbox" name="scope" value="${k}" ${k === 'goals:write' || k === 'phone:control' ? '' : 'checked'} /> ${esc(label)}</label>`).join(' ');
   const displays = db.listDisplays(u.email);
   const displayRows = displays.length
     ? displays
@@ -376,6 +383,8 @@ app.get('/', requireAuth, (req, res) => {
        <ul style="list-style:none;padding:0">${deviceRows}</ul>
        <p style="margin-bottom:0"><strong>Connected apps (MCP)</strong></p>
        <ul style="list-style:none;padding:0">${grantRows}</ul>
+       <p style="margin-bottom:0"><strong>Phone commands</strong></p>
+       <ul style="list-style:none;padding:0">${commandRows}</ul>
        <p style="margin-bottom:0"><strong>API tokens</strong></p>
        <ul style="list-style:none;padding:0">${tokenRows}</ul>
        <form method="POST" action="/tokens" style="margin:.25rem 0 1rem;text-align:left">
