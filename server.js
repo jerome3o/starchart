@@ -5,7 +5,7 @@ const express = require('express');
 const cookieSession = require('cookie-session');
 const db = require('./db');
 const api = require('./api');
-const { createOAuthRouter } = require('./oauth');
+const { createOAuthRouter, SCOPES } = require('./oauth');
 const { handleMcpRequest } = require('./mcp');
 const { createDisplayRouter } = require('./displays');
 
@@ -246,6 +246,34 @@ app.all('/mcp', (_req, res) => {
   res.status(405).json({ error: 'method_not_allowed' });
 });
 
+// --- Personal API tokens (for MCP clients without OAuth, e.g. the Gemini API)
+
+app.post('/tokens', requireAuth, express.urlencoded({ extended: false }), (req, res) => {
+  const body = req.body || {};
+  const name = String(body.name || '').trim().slice(0, 60) || 'API token';
+  const requested = [].concat(body.scope || []).map(String).filter((x) => SCOPES[x]);
+  if (!requested.length) {
+    return res.status(400).send(page('Token — Starchart', '<h1>Pick at least one scope</h1><a class="btn" href="/">Back</a>'));
+  }
+  const scope = requested.join(' ');
+  const token = db.createApiToken(req.session.user.email, name, scope);
+  const esc = (x) => String(x).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+  res.set('Cache-Control', 'no-store');
+  res.send(page('API token — Starchart', `
+    <h1>🔑 ${esc(name)}</h1>
+    <p>Scopes: <code>${esc(scope)}</code>. Copy it now — it won't be shown again.</p>
+    <p><code style="word-break:break-all;font-size:1rem">${token}</code></p>
+    <p class="muted" style="text-align:left">Use it as a bearer token against <code>${issuer}/mcp</code>:<br />
+    <code>Authorization: Bearer &lt;token&gt;</code>. The repo's <code>examples/gemini_starchart.py</code>
+    runs Gemini with these tools.</p>
+    <a class="btn" href="/">Done</a>`));
+});
+
+app.post('/tokens/:id/revoke', requireAuth, (req, res) => {
+  db.revokeApiToken(req.session.user.email, Number(req.params.id));
+  res.redirect('/');
+});
+
 
 app.get('/', requireAuth, (req, res) => {
   const u = req.session.user;
@@ -284,6 +312,17 @@ app.get('/', requireAuth, (req, res) => {
     : `<li>None. MCP endpoint: <code>${issuer}/mcp</code></li>`;
   const esc = (s) => String(s ?? '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   const smallBtn = 'padding:.15rem .6rem;font-size:.8rem;margin-top:0';
+  const tokens = db.listApiTokens(u.email);
+  const tokenRows = tokens.length
+    ? tokens.map((t) => `<li style="text-align:left;margin:.5rem 0;">
+        <strong>${esc(t.name)}</strong> — <code>${esc(t.scope)}</code>, created ${fmt(t.created_at)}, last used ${fmt(t.last_used_at)}
+        <form method="POST" action="/tokens/${t.id}/revoke" style="display:inline">
+          <button class="btn" style="${smallBtn};background:#7a3b3b" type="submit">Revoke</button>
+        </form>
+      </li>`).join('')
+    : '<li>None. For MCP clients that can\'t sign in with Google, like the Gemini API.</li>';
+  const scopeBoxes = Object.entries(SCOPES).map(([k, label]) =>
+    `<label style="margin-right:.6rem;white-space:nowrap"><input type="checkbox" name="scope" value="${k}" ${k === 'goals:write' ? '' : 'checked'} /> ${esc(label)}</label>`).join(' ');
   const displays = db.listDisplays(u.email);
   const displayRows = displays.length
     ? displays
@@ -337,6 +376,13 @@ app.get('/', requireAuth, (req, res) => {
        <ul style="list-style:none;padding:0">${deviceRows}</ul>
        <p style="margin-bottom:0"><strong>Connected apps (MCP)</strong></p>
        <ul style="list-style:none;padding:0">${grantRows}</ul>
+       <p style="margin-bottom:0"><strong>API tokens</strong></p>
+       <ul style="list-style:none;padding:0">${tokenRows}</ul>
+       <form method="POST" action="/tokens" style="margin:.25rem 0 1rem;text-align:left">
+         <input name="name" placeholder="Token name, e.g. Gemini" maxlength="60" style="padding:.3rem .5rem;border-radius:8px;border:1px solid #2c365a;background:#1f2740;color:#e6e9f0" />
+         <button class="btn" style="padding:.3rem .8rem;font-size:.9rem;margin-top:0" type="submit">Create token</button>
+         <div class="muted" style="margin-top:.4rem">${scopeBoxes}</div>
+       </form>
        <p style="margin-bottom:0"><strong>E-ink displays</strong> · <a href="/displays/preview.png" style="color:#9aa4bf">preview dashboard</a></p>
        <ul style="list-style:none;padding:0">${displayRows}</ul>
        <form method="POST" action="/displays/create-key" style="margin:.25rem 0 1rem">
