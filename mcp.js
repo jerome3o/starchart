@@ -287,6 +287,24 @@ function formatCommand(c) {
 }
 
 function registerPhoneTools(server, email, clientName) {
+  // Queues a command for the phone and waits (up to wait_seconds) for its result.
+  const runCommand = async (command, args, deviceId, waitSeconds) => {
+    const device = deviceId != null ? db.deviceForEmail(email, deviceId) : db.mostRecentDevice(email);
+    if (!device) return error('No linked phone found (see list_devices).');
+    const id = db.queuePhoneCommand(device.id, command, args, clientName);
+    const deadline = Date.now() + waitSeconds * 1000;
+    let row = db.getPhoneCommand(email, id);
+    while (Date.now() < deadline && (row.status === 'pending' || row.status === 'delivered')) {
+      await sleep(1000);
+      row = db.getPhoneCommand(email, id);
+    }
+    const out = formatCommand(row);
+    if (row.status === 'pending' || row.status === 'delivered') {
+      out.note = `The phone has not ${row.status === 'pending' ? 'picked it up' : 'finished it'} yet; call get_phone_command with command_id ${id} later.`;
+    }
+    return json(out);
+  };
+
   server.registerTool(
     'phone_command',
     {
@@ -306,26 +324,30 @@ function registerPhoneTools(server, email, clientName) {
       },
     },
     async ({ command, title, text, open, device_id, wait_seconds }) => {
-      const device = device_id != null ? db.deviceForEmail(email, device_id) : db.mostRecentDevice(email);
-      if (!device) return error('No linked phone found (see list_devices).');
       let args = {};
       if (command === 'notify') {
         if (!title && !text) return error('notify needs a title or text');
         args = { title: title || 'Starchart', text: text || '', open: open || 'app' };
       }
-      const id = db.queuePhoneCommand(device.id, command, args, clientName);
-      const deadline = Date.now() + wait_seconds * 1000;
-      let row = db.getPhoneCommand(email, id);
-      while (Date.now() < deadline && (row.status === 'pending' || row.status === 'delivered')) {
-        await sleep(1000);
-        row = db.getPhoneCommand(email, id);
-      }
-      const out = formatCommand(row);
-      if (row.status === 'pending' || row.status === 'delivered') {
-        out.note = `The phone has not ${row.status === 'pending' ? 'picked it up' : 'finished it'} yet; call get_phone_command with command_id ${id} later.`;
-      }
-      return json(out);
+      return runCommand(command, args, device_id, wait_seconds);
     }
+  );
+
+  server.registerTool(
+    'send_notification',
+    {
+      title: 'Send the user a notification',
+      description: "Show a notification with any text on the user's phone (through the Starchart app). "
+        + 'Tapping it opens Starchart, or the settings screen given in open. Delivery takes up to a minute while the phone '
+        + 'is awake, longer in deep Doze; the result says whether it was shown.',
+      inputSchema: {
+        title: z.string().min(1).max(80),
+        text: z.string().max(400).default(''),
+        open: z.enum(NOTIFY_OPEN_TARGETS).default('app'),
+        wait_seconds: z.number().int().min(0).max(55).default(30),
+      },
+    },
+    async ({ title, text, open, wait_seconds }) => runCommand('notify', { title, text, open }, null, wait_seconds)
   );
 
   server.registerTool(

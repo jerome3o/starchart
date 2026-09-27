@@ -74,12 +74,13 @@ async function runForUser(email, log = console.log) {
   list.sort((a, b) => b.context.behind_by - a.context.behind_by);
   for (const c of list) {
     const decision = await claude.shouldNudge(c.context);
-    log(`[nudges] ${email} ${c.goal.name}: ${decision.send ? 'send' : 'skip'} — ${decision.reason}`);
+    // Logs stay content-free: Fly logs can be printed by a public Actions workflow.
+    log(`[nudges] goal ${c.goal.id}: ${decision.send ? 'send' : 'skip'}`);
     if (!decision.send) continue;
     const note = await claude.writeNudge(c.context);
     const commandId = db.queuePhoneCommand(device.id, 'notify', { title: note.title, text: note.text, open: 'app' }, 'Starchart nudges');
     db.recordNudge({ email, goalId: c.goal.id, title: note.title, text: note.text, reason: decision.reason, commandId });
-    log(`[nudges] sent to ${email}: ${note.title} — ${note.text}`);
+    log(`[nudges] sent nudge for goal ${c.goal.id}`);
     return note;
   }
   return null;
@@ -91,7 +92,7 @@ async function runAll(log = console.log) {
     try {
       await runForUser(email, log);
     } catch (e) {
-      log(`[nudges] ${email} failed: ${e.message}`);
+      log(`[nudges] run failed: ${e.message}`);
     }
   }
 }
