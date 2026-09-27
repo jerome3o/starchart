@@ -66,6 +66,7 @@ class MainActivity : AppCompatActivity() {
         if (trackingEnabled && !LocationService.running) {
             LocationService.start(this, "app_opened")
         }
+        PhoneCommands.pollAsync(this)
     }
 
     private fun showTab(itemId: Int) {

@@ -63,7 +63,7 @@ router.post('/fixes', (req, res) => {
   }
   const accepted = db.insertFixes(req.device.id, cleaned);
   db.setDeviceError(req.device.id, null);
-  res.json({ accepted, total: db.fixCount(req.device.id) });
+  res.json({ accepted, total: db.fixCount(req.device.id), pendingCommands: db.pendingCommandCount(req.device.id) });
 });
 
 // Tracking diagnostics from the phone (see LocationDb events on Android).
@@ -84,6 +84,19 @@ router.post('/events', (req, res) => {
     cleaned.push({ clientId, time, kind: e.kind, detail });
   }
   res.json({ accepted: db.insertTrackingEvents(req.device.id, cleaned) });
+});
+
+// Commands queued by MCP clients with phone:control (see mcp.js).
+router.get('/commands', (req, res) => {
+  res.json({ commands: db.takePhoneCommands(req.device.id) });
+});
+
+router.post('/commands/:id/result', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad id' });
+  const body = req.body || {};
+  const updated = db.completePhoneCommand(req.device.id, id, body.ok !== false, body.result);
+  res.json({ updated });
 });
 
 // Goal management for the phone (same device-token auth as above).

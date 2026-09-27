@@ -11,6 +11,7 @@ import android.os.SystemClock
 import com.google.android.gms.location.CurrentLocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.Tasks
 import java.util.concurrent.TimeUnit
 
 /**
@@ -25,6 +26,20 @@ class TrackingWatchdog : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (!Prefs.get(context).getBoolean(Prefs.KEY_TRACKING_ENABLED, false)) return
         schedule(context)
+        val app = context.applicationContext
+        val pending = goAsync()
+        Thread {
+            try {
+                check(app)
+                // Also the pickup point for phone commands while the phone dozes.
+                PhoneCommands.poll(app)
+            } finally {
+                pending.finish()
+            }
+        }.start()
+    }
+
+    private fun check(context: Context) {
         TrackingLog.recordProcessExits(context)
 
         if (!LocationService.running) {
@@ -44,39 +59,31 @@ class TrackingWatchdog : BroadcastReceiver() {
             context, "watchdog_stale",
             "no fix for ${TimeUnit.MILLISECONDS.toMinutes(ageMs)} min; ${TrackingLog.powerState(context)}"
         )
-        requestFix(context, goAsync())
+        requestFix(context)
     }
 
     @SuppressLint("MissingPermission")
-    private fun requestFix(context: Context, pending: PendingResult) {
-        val app = context.applicationContext
+    private fun requestFix(context: Context) {
         val request = CurrentLocationRequest.Builder()
             .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
             .setDurationMillis(FIX_TIMEOUT_MS)
             .setMaxUpdateAgeMillis(STALE_MS / 2)
             .build()
         try {
-            LocationServices.getFusedLocationProviderClient(app).getCurrentLocation(request, null)
-                .addOnCompleteListener { task ->
-                    val location = if (task.isSuccessful) task.result else null
-                    Thread {
-                        try {
-                            if (location == null) {
-                                TrackingLog.log(app, "watchdog_no_fix", task.exception?.message)
-                            } else {
-                                LocationDb(app).insert(
-                                    LocationDb.Fix(location.time, location.latitude, location.longitude, location.accuracy)
-                                )
-                                if (Sync.isLinked(app) && Sync.hasNetwork(app)) Sync.uploadPending(app)
-                            }
-                        } finally {
-                            pending.finish()
-                        }
-                    }.start()
-                }
+            val location = Tasks.await(
+                LocationServices.getFusedLocationProviderClient(context).getCurrentLocation(request, null),
+                FIX_TIMEOUT_MS + 5_000, TimeUnit.MILLISECONDS
+            )
+            if (location == null) {
+                TrackingLog.log(context, "watchdog_no_fix", "no location returned")
+                return
+            }
+            LocationDb(context).insert(
+                LocationDb.Fix(location.time, location.latitude, location.longitude, location.accuracy)
+            )
+            if (Sync.isLinked(context) && Sync.hasNetwork(context)) Sync.uploadPending(context)
         } catch (e: Exception) {
-            TrackingLog.log(app, "watchdog_no_fix", "${e.javaClass.simpleName}: ${e.message}")
-            pending.finish()
+            TrackingLog.log(context, "watchdog_no_fix", "${e.javaClass.simpleName}: ${e.message}")
         }
     }
 

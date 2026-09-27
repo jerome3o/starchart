@@ -110,6 +110,10 @@ object Sync {
 
     private const val BATCH_SIZE = 500
 
+    /** Set when the server says phone commands are queued (see PhoneCommands). */
+    @Volatile
+    var commandsWaiting = false
+
     /** Tracking diagnostics, uploaded after the fixes they explain. */
     private fun uploadEvents(context: Context, token: String, db: LocationDb) {
         while (true) {
@@ -146,6 +150,7 @@ object Sync {
             }
         })
         val response = request("POST", "/api/fixes", token, body)
+        commandsWaiting = response.optInt("pendingCommands", 0) > 0
         return response.getInt("accepted")
     }
 

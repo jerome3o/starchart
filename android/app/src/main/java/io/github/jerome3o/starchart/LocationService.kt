@@ -56,7 +56,10 @@ class LocationService : Service() {
 
     private fun pushToServer() {
         if (!Sync.isLinked(this) || !Sync.hasNetwork(this)) return
-        uploader.execute { Sync.uploadPending(this) }
+        uploader.execute {
+            Sync.uploadPending(this)
+            if (Sync.commandsWaiting) PhoneCommands.poll(this)
+        }
     }
 
     private val powerReceiver = object : BroadcastReceiver() {
@@ -71,8 +74,11 @@ class LocationService : Service() {
         }
     }
 
+    private var request: LocationRequest? = null
+
     override fun onCreate() {
         super.onCreate()
+        instance = this
         db = LocationDb(this)
         fused = LocationServices.getFusedLocationProviderClient(this)
         TrackingLog.recordProcessExits(this)
@@ -117,6 +123,7 @@ class LocationService : Service() {
             // fixes keep their real timestamps, the radio wakes up less.
             .setMaxUpdateDelayMillis(INTERVAL_MS * 2)
             .build()
+        this.request = request
 
         try {
             fused.requestLocationUpdates(request, callback, Looper.getMainLooper())
@@ -137,6 +144,7 @@ class LocationService : Service() {
     }
 
     override fun onDestroy() {
+        instance = null
         if (running) TrackingLog.log(this, "service_stopped")
         try { unregisterReceiver(powerReceiver) } catch (_: Exception) {}
         fused.removeLocationUpdates(callback)
@@ -169,5 +177,19 @@ class LocationService : Service() {
         @Volatile
         var running = false
             private set
+
+        @Volatile
+        private var instance: LocationService? = null
+
+        /** Re-registers location updates in the live service; false if none is running. */
+        @android.annotation.SuppressLint("MissingPermission")
+        fun restartUpdates(): Boolean {
+            val service = instance ?: return false
+            val request = service.request ?: return false
+            service.fused.removeLocationUpdates(service.callback)
+            service.fused.requestLocationUpdates(request, service.callback, Looper.getMainLooper())
+            TrackingLog.log(service, "updates_restarted")
+            return true
+        }
     }
 }

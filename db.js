@@ -48,6 +48,24 @@ CREATE TABLE IF NOT EXISTS tracking_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tracking_events_device_time ON tracking_events (device_id, time);
+
+-- Commands queued for the phone app by MCP clients with phone:control. The
+-- app picks them up when it next talks to the server and posts a result.
+-- Kept as an audit log.
+CREATE TABLE IF NOT EXISTS phone_commands (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  command TEXT NOT NULL,
+  args TEXT,
+  requested_by TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  delivered_at INTEGER,
+  completed_at INTEGER,
+  result TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_commands_device_status ON phone_commands (device_id, status);
 `);
 
 db.exec(`
@@ -243,6 +261,81 @@ function trackingEventsBetween(email, fromMs, toMs) {
     .all(email.toLowerCase(), fromMs, toMs);
 }
 
+// --- Phone commands -----------------------------------------------------------
+
+const COMMAND_TTL_MS = 60 * 60 * 1000;
+
+function queuePhoneCommand(deviceId, command, args, requestedBy) {
+  const info = db.prepare(
+    `INSERT INTO phone_commands (device_id, command, args, requested_by, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(deviceId, command, JSON.stringify(args || {}), requestedBy || null, Date.now());
+  return info.lastInsertRowid;
+}
+
+function expireStaleCommands() {
+  db.prepare(
+    `UPDATE phone_commands SET status = 'expired', completed_at = ?
+     WHERE status IN ('pending', 'delivered') AND created_at < ?`
+  ).run(Date.now(), Date.now() - COMMAND_TTL_MS);
+}
+
+function pendingCommandCount(deviceId) {
+  return db.prepare(
+    `SELECT COUNT(*) AS c FROM phone_commands WHERE device_id = ? AND status = 'pending' AND created_at >= ?`
+  ).get(deviceId, Date.now() - COMMAND_TTL_MS).c;
+}
+
+// Hands the phone its pending commands and marks them delivered.
+const takePhoneCommands = db.transaction((deviceId) => {
+  expireStaleCommands();
+  const rows = db.prepare(
+    `SELECT id, command, args FROM phone_commands WHERE device_id = ? AND status = 'pending' ORDER BY id`
+  ).all(deviceId);
+  const mark = db.prepare(`UPDATE phone_commands SET status = 'delivered', delivered_at = ? WHERE id = ?`);
+  for (const r of rows) mark.run(Date.now(), r.id);
+  return rows.map((r) => ({ id: r.id, command: r.command, args: JSON.parse(r.args || '{}') }));
+});
+
+function completePhoneCommand(deviceId, id, ok, result) {
+  return db.prepare(
+    `UPDATE phone_commands SET status = ?, completed_at = ?, result = ?
+     WHERE id = ? AND device_id = ? AND status IN ('pending', 'delivered')`
+  ).run(ok ? 'done' : 'failed', Date.now(), JSON.stringify(result ?? null).slice(0, 200000), id, deviceId).changes;
+}
+
+function getPhoneCommand(email, id) {
+  const row = db.prepare(
+    `SELECT c.* FROM phone_commands c JOIN devices d ON d.id = c.device_id WHERE c.id = ? AND d.email = ?`
+  ).get(id, email.toLowerCase());
+  if (!row) return null;
+  return { ...row, args: JSON.parse(row.args || '{}'), result: row.result ? JSON.parse(row.result) : null };
+}
+
+function listPhoneCommands(email, limit = 20) {
+  return db.prepare(
+    `SELECT c.id, c.device_id, c.command, c.args, c.requested_by, c.status, c.created_at, c.completed_at
+     FROM phone_commands c JOIN devices d ON d.id = c.device_id
+     WHERE d.email = ? ORDER BY c.id DESC LIMIT ?`
+  ).all(email.toLowerCase(), limit);
+}
+
+// The device that most recently sent a fix (the one to send commands to).
+function mostRecentDevice(email) {
+  return db.prepare(
+    `SELECT d.id, d.label FROM devices d
+     LEFT JOIN (SELECT device_id, MAX(time) AS t FROM fixes GROUP BY device_id) f ON f.device_id = d.id
+     WHERE d.email = ? AND d.token_hash NOT LIKE 'revoked:%'
+     ORDER BY f.t DESC NULLS LAST, d.id DESC LIMIT 1`
+  ).get(email.toLowerCase());
+}
+
+function deviceForEmail(email, id) {
+  return db.prepare(
+    `SELECT id, label FROM devices WHERE id = ? AND email = ? AND token_hash NOT LIKE 'revoked:%'`
+  ).get(id, email.toLowerCase());
+}
+
 function fixCount(deviceId) {
   return db.prepare('SELECT COUNT(*) AS c FROM fixes WHERE device_id = ?').get(deviceId).c;
 }
@@ -366,7 +459,7 @@ function listGrants(email) {
   return db
     .prepare(
       `SELECT g.client_id, c.client_name, MIN(g.created_at) AS first_connected,
-              MAX(g.last_used_at) AS last_used
+              MAX(g.last_used_at) AS last_used, GROUP_CONCAT(DISTINCT g.scope) AS scopes
        FROM oauth_grants g JOIN oauth_clients c ON c.client_id = g.client_id
        WHERE g.email = ? AND g.revoked = 0 AND g.refresh_expires_at > ?
        GROUP BY g.client_id ORDER BY first_connected`
@@ -679,6 +772,14 @@ module.exports = {
   insertFixes,
   insertTrackingEvents,
   trackingEventsBetween,
+  queuePhoneCommand,
+  pendingCommandCount,
+  takePhoneCommands,
+  completePhoneCommand,
+  getPhoneCommand,
+  listPhoneCommands,
+  mostRecentDevice,
+  deviceForEmail,
   fixCount,
   latestFix,
   fixesBetween,

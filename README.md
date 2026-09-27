@@ -142,6 +142,18 @@ Tools, gated by scope (`location:read`, `goals:read`, `goals:write`):
 `get_location_history`, `find_location_gaps`, `list_goals`, `log_completion`, `undo_completion`,
 `create_goal` — all scoped to the signed-in user.
 
+**Phone control (`phone:control`, opt-in):** the consent page leaves this
+box unticked; tick it to let the client queue commands for the app from a
+fixed list — `diagnostics` (versions, service/sync state, power and
+permission state, recent process deaths and tracking events, App Functions
+registration), `restart_tracking`, `sync_now`, `fresh_fix`,
+`refresh_widget` and `notify` (a notification that opens a chosen settings
+screen). The server queues them (`phone_command` waits up to 55 s for the
+result, `get_phone_command` checks later); the app picks them up after fix
+uploads (the `/api/fixes` response flags waiting commands), from the
+10-minute watchdog, the hourly sync and when opened. Commands expire after an
+hour and are listed on the home page.
+
 **Connect Claude.ai:** Settings → Connectors → Add custom connector → URL
 `https://starchart.fly.dev/mcp` → Connect. You'll be sent through Google
 login and a consent page; after that Claude can call the tools.

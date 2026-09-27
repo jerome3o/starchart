@@ -205,9 +205,102 @@ function registerOverviewTool(server, email, allowed) {
   );
 }
 
-function buildServer(email, scopes) {
-  const server = new McpServer({ name: 'starchart', version: '1.1.0' });
+// --- Phone control (phone:control): a fixed command list the app executes -----
+
+const PHONE_COMMANDS = {
+  diagnostics: 'Full health report: app version, tracking/service state, last fix age, unsynced counts, sync errors, power state (Doze, battery saver, battery-optimisation exemption, standby bucket, background restriction), every permission, recent process deaths with reasons, recent tracking events, App Functions registration, goals/widget cache age.',
+  restart_tracking: 'Re-register location updates in the tracking service, or start it if it is not running.',
+  sync_now: 'Upload any unsynced fixes and tracking events now.',
+  fresh_fix: 'Take one high-accuracy location fix now (up to ~30 s) and upload it.',
+  refresh_widget: 'Re-fetch goals from the server and redraw the home-screen widget.',
+  notify: 'Show a notification on the phone (args: title, text, optional open = one of settings targets) — use it to ask the user to fix a permission or setting.',
+};
+const NOTIFY_OPEN_TARGETS = ['app', 'app_settings', 'battery_optimization', 'exact_alarms', 'notification_settings', 'overlay'];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function formatCommand(c) {
+  return {
+    command_id: c.id,
+    device_id: c.device_id,
+    command: c.command,
+    status: c.status,
+    requested_at: new Date(c.created_at).toISOString(),
+    completed_at: c.completed_at ? new Date(c.completed_at).toISOString() : null,
+    result: c.result,
+  };
+}
+
+function registerPhoneTools(server, email, clientName) {
+  server.registerTool(
+    'phone_command',
+    {
+      title: 'Run a command on the phone',
+      description: 'Queue one of a fixed set of commands for the Starchart app on the phone and wait for its result. '
+        + 'The app picks commands up when it next talks to the server: within about a minute while tracking is running, '
+        + 'up to ~10 minutes if the phone is in deep Doze. If it has not answered within wait_seconds the command stays '
+        + 'queued (for an hour) — check it later with get_phone_command. Commands: '
+        + Object.entries(PHONE_COMMANDS).map(([k, v]) => `${k} — ${v}`).join(' '),
+      inputSchema: {
+        command: z.enum(Object.keys(PHONE_COMMANDS)),
+        title: z.string().max(80).optional().describe('notify only'),
+        text: z.string().max(400).optional().describe('notify only'),
+        open: z.enum(NOTIFY_OPEN_TARGETS).optional().describe('notify only: screen to open when the notification is tapped'),
+        device_id: z.number().int().optional().describe('Defaults to the phone that most recently sent a fix'),
+        wait_seconds: z.number().int().min(0).max(55).default(45),
+      },
+    },
+    async ({ command, title, text, open, device_id, wait_seconds }) => {
+      const device = device_id != null ? db.deviceForEmail(email, device_id) : db.mostRecentDevice(email);
+      if (!device) return error('No linked phone found (see list_devices).');
+      let args = {};
+      if (command === 'notify') {
+        if (!title && !text) return error('notify needs a title or text');
+        args = { title: title || 'Starchart', text: text || '', open: open || 'app' };
+      }
+      const id = db.queuePhoneCommand(device.id, command, args, clientName);
+      const deadline = Date.now() + wait_seconds * 1000;
+      let row = db.getPhoneCommand(email, id);
+      while (Date.now() < deadline && (row.status === 'pending' || row.status === 'delivered')) {
+        await sleep(1000);
+        row = db.getPhoneCommand(email, id);
+      }
+      const out = formatCommand(row);
+      if (row.status === 'pending' || row.status === 'delivered') {
+        out.note = `The phone has not ${row.status === 'pending' ? 'picked it up' : 'finished it'} yet; call get_phone_command with command_id ${id} later.`;
+      }
+      return json(out);
+    }
+  );
+
+  server.registerTool(
+    'get_phone_command',
+    {
+      title: 'Phone command status',
+      description: 'Status and result of a command queued with phone_command. Omit command_id to list the 20 most recent commands.',
+      inputSchema: { command_id: z.number().int().optional() },
+    },
+    async ({ command_id }) => {
+      if (command_id == null) {
+        return json({
+          commands: db.listPhoneCommands(email).map((c) => ({
+            command_id: c.id, device_id: c.device_id, command: c.command, status: c.status,
+            requested_by: c.requested_by, requested_at: new Date(c.created_at).toISOString(),
+          })),
+        });
+      }
+      const row = db.getPhoneCommand(email, command_id);
+      if (!row) return error('No such command.');
+      return json(formatCommand(row));
+    }
+  );
+}
+
+function buildServer(email, scopes, clientName) {
+  const server = new McpServer({ name: 'starchart', version: '1.2.0' });
   const has = (s) => scopes.includes(s);
+
+  if (has('phone:control')) registerPhoneTools(server, email, clientName);
 
   registerOverviewTool(server, email, { goals: has('goals:read'), location: has('location:read') });
   if (has('goals:read')) registerGoalTools(server, email, has('goals:write'));
@@ -419,7 +512,7 @@ function simplifyListedSchemas(server) {
 // One server + transport per request: stateless, nothing to leak between
 // users, and it scales to zero with the Fly machine.
 async function handleMcpRequest(req, res) {
-  const server = buildServer(req.grant.email, req.grant.scope.split(' '));
+  const server = buildServer(req.grant.email, req.grant.scope.split(' '), req.grant.client_name);
   simplifyListedSchemas(server);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => {
