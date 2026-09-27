@@ -143,7 +143,7 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
       state: q.state ? String(q.state) : null,
       resource: q.resource ? String(q.resource) : null,
     };
-    const scopeList = scope.split(' ').map((s) => `<li style="list-style:none"><label>
+    const scopeList = scope.split(' ').map((s) => `<li style="list-style:none"><label class="scope">
         <input type="checkbox" name="scope" value="${s}" ${OPT_IN_SCOPES.has(s) ? '' : 'checked'} />
         ${escapeHtml(SCOPES[s])}${OPT_IN_SCOPES.has(s) ? ' <strong>(opt-in)</strong>' : ''}</label></li>`).join('');
     res.send(page('Connect — Starchart', `
@@ -151,7 +151,7 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
       <p><strong>${escapeHtml(client.client_name)}</strong> wants access to your Starchart data as
       <strong>${escapeHtml(req.session.user.email)}</strong>:</p>
       <form method="POST" action="/oauth/authorize/decision" style="display:inline">
-        <ul style="text-align:left">${scopeList}</ul>
+        <ul style="text-align:left;padding:0">${scopeList}</ul>
         <input type="hidden" name="csrf" value="${csrf}" />
         <button class="btn" name="decision" value="approve" type="submit">Allow</button>
         <button class="btn" name="decision" value="deny" type="submit" style="background:#7a3b3b">Deny</button>
