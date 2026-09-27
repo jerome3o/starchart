@@ -111,7 +111,7 @@ router.post('/chat', async (req, res) => {
   try {
     res.json(await claude.chat(req.device.email, req.device.label, history));
   } catch (e) {
-    console.error('[chat]', e);
+    console.error('[chat] failed:', e.status || '', e.message);
     res.status(502).json({ error: `Claude request failed: ${e.message}` });
   }
 });

@@ -152,7 +152,8 @@ screen). The server queues them (`phone_command` waits up to 55 s for the
 result, `get_phone_command` checks later); the app picks them up after fix
 uploads (the `/api/fixes` response flags waiting commands), from the
 10-minute watchdog, the hourly sync and when opened. Commands expire after an
-hour and are listed on the home page.
+hour and are listed on the home page. `send_notification` is the shortcut
+for "show this text on my phone".
 
 **Connect Claude.ai:** Settings → Connectors → Add custom connector → URL
 `https://starchart.fly.dev/mcp` → Connect. You'll be sent through Google
