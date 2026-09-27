@@ -66,11 +66,6 @@
         </receiver>
 
         <service
-            android:name=".GoalsWidgetService"
-            android:exported="false"
-            android:permission="android.permission.BIND_REMOTEVIEWS" />
-
-        <service
             android:name=".OverlayService"
             android:exported="false"
             android:foregroundServiceType="specialUse">

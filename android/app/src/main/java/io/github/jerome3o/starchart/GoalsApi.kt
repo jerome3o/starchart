@@ -76,7 +76,10 @@ object GoalsApi {
     /** Persists the snapshot (read by the widget) and refreshes any widgets. */
     fun saveCache(context: Context, snapshot: Snapshot) {
         try {
-            Prefs.get(context).edit().putString(Prefs.KEY_GOALS_CACHE, toJson(snapshot).toString()).commit()
+            Prefs.get(context).edit()
+                .putString(Prefs.KEY_GOALS_CACHE, toJson(snapshot).toString())
+                .putLong(Prefs.KEY_GOALS_CACHE_TIME, System.currentTimeMillis())
+                .commit()
         } catch (_: Exception) {}
         GoalsWidgetProvider.refresh(context)
     }
@@ -103,6 +106,8 @@ object GoalsApi {
         }
         return JSONObject().put("timezone", s.timezone).put("periods", periods).put("goals", goals)
     }
+
+    fun cachedAt(context: Context): Long = Prefs.get(context).getLong(Prefs.KEY_GOALS_CACHE_TIME, 0L)
 
     fun cached(context: Context): Snapshot? =
         Prefs.get(context).getString(Prefs.KEY_GOALS_CACHE, null)?.let {

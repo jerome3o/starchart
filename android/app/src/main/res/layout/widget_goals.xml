@@ -36,28 +36,31 @@
 
     </LinearLayout>
 
-    <FrameLayout
+    <TextView
+        android:id="@+id/widget_empty"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_weight="1"
+        android:gravity="center"
+        android:text="@string/widget_empty"
+        android:textColor="@color/widget_subtext"
+        android:textSize="13sp"
+        android:visibility="gone" />
 
-        <ListView
-            android:id="@+id/widget_list"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:divider="@null"
-            android:dividerHeight="0dp"
-            android:scrollbars="none" />
+    <LinearLayout
+        android:id="@+id/widget_list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
 
-        <TextView
-            android:id="@+id/widget_empty"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:gravity="center"
-            android:text="@string/widget_empty"
-            android:textColor="@color/widget_subtext"
-            android:textSize="13sp" />
-
-    </FrameLayout>
+    <TextView
+        android:id="@+id/widget_more"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingTop="2dp"
+        android:textColor="@color/widget_subtext"
+        android:textSize="12sp"
+        android:visibility="gone" />
 
 </LinearLayout>

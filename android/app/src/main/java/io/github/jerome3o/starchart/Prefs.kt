@@ -11,6 +11,7 @@ object Prefs {
     const val KEY_MAP_STYLE = "map_style"
     const val KEY_LAST_TAB = "last_tab"
     const val KEY_GOALS_CACHE = "goals_cache"
+    const val KEY_GOALS_CACHE_TIME = "goals_cache_time"
 
     fun get(context: Context): SharedPreferences =
         context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
