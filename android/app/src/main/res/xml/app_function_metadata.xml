@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AppFunctionAppMetadata xmlns:appfn="http://schemas.android.com/apk/androidx.appfunctions"
+    appfn:description="Starchart tracks the user's habit goals (e.g. gym, reading) as completions per 7- or 14-day period, with a pace for where they should be by now.
+Operational Patterns:
+  - Call 'getGoals' to answer questions about progress or to find a goal's exact name.
+  - When the user says they did a goal, call 'openGoalSlider' with its name; the user logs it by finishing the slider. There is no way to log a goal directly."
+    appfn:displayDescription="@string/app_function_display_description" />

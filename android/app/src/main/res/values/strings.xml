@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Starchart</string>
+    <string name="app_function_description">Check habit goal progress and open the slider to log a goal.</string>
+    <string name="app_function_display_description">Starchart habit goals</string>
     <string name="app_title">Starchart ⭐</string>
     <string name="app_subtitle">Placeholder build — testing install, launch, and notifications.</string>
 
