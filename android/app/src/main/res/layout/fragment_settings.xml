@@ -186,6 +186,20 @@
             android:layout_marginTop="16dp"
             android:text="@string/switch_daily_reminder" />
 
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switch_nudges"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/switch_nudges" />
+
+        <TextView
+            android:id="@+id/nudges_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/nudges_explain"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
         <!-- Overlay -->
         <TextView
             android:layout_width="wrap_content"

@@ -406,4 +406,5 @@ app.get('/', requireAuth, (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`starchart listening on :${PORT} (env=${NODE_ENV || 'development'})`);
+  require('./nudges').start();
 });

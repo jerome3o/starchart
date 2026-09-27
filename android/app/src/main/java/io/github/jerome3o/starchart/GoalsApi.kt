@@ -21,6 +21,8 @@ object GoalsApi {
         val daysLeft: Int,
         val periodStart: String,
         val periodEnd: String,
+        /** What the goal is and why (used by Claude's chat and nudges). */
+        val description: String? = null,
     ) {
         val isBehind get() = status == "behind"
         val complete get() = count >= target
@@ -63,6 +65,7 @@ object GoalsApi {
         daysLeft = g.getInt("days_left"),
         periodStart = g.getString("period_start"),
         periodEnd = g.getString("period_end"),
+        description = if (g.isNull("description")) null else g.optString("description").ifEmpty { null },
     )
 
     fun fetch(context: Context): Snapshot {
@@ -102,7 +105,8 @@ object GoalsApi {
                 .put("id", g.id).put("name", g.name).put("emoji", g.emoji ?: JSONObject.NULL)
                 .put("target", g.target).put("period_days", g.periodDays).put("hours_offset", g.hoursOffset)
                 .put("count", g.count).put("target_by_now", g.targetByNow).put("status", g.status)
-                .put("days_left", g.daysLeft).put("period_start", g.periodStart).put("period_end", g.periodEnd))
+                .put("days_left", g.daysLeft).put("period_start", g.periodStart).put("period_end", g.periodEnd)
+                .put("description", g.description ?: JSONObject.NULL))
         }
         return JSONObject().put("timezone", s.timezone).put("periods", periods).put("goals", goals)
     }
@@ -114,11 +118,11 @@ object GoalsApi {
             try { parseSnapshot(JSONObject(it)) } catch (_: Exception) { null }
         }
 
-    fun create(context: Context, name: String, emoji: String?, target: Double, periodDays: Int, hoursOffset: Double): Goal =
-        parseGoal(Sync.call(context, "POST", "/api/goals", goalBody(name, emoji, target, periodDays, hoursOffset)))
+    fun create(context: Context, name: String, emoji: String?, target: Double, periodDays: Int, hoursOffset: Double, description: String?): Goal =
+        parseGoal(Sync.call(context, "POST", "/api/goals", goalBody(name, emoji, target, periodDays, hoursOffset, description)))
 
-    fun update(context: Context, id: Long, name: String, emoji: String?, target: Double, periodDays: Int, hoursOffset: Double): Goal =
-        cacheGoal(context, parseGoal(Sync.call(context, "POST", "/api/goals/$id", goalBody(name, emoji, target, periodDays, hoursOffset))))
+    fun update(context: Context, id: Long, name: String, emoji: String?, target: Double, periodDays: Int, hoursOffset: Double, description: String?): Goal =
+        cacheGoal(context, parseGoal(Sync.call(context, "POST", "/api/goals/$id", goalBody(name, emoji, target, periodDays, hoursOffset, description))))
 
     fun archive(context: Context, id: Long) {
         Sync.call(context, "POST", "/api/goals/$id", JSONObject().put("archived", true))
@@ -139,8 +143,9 @@ object GoalsApi {
     fun undo(context: Context, id: Long): Goal =
         cacheGoal(context, parseGoal(Sync.call(context, "POST", "/api/goals/$id/undo")))
 
-    private fun goalBody(name: String, emoji: String?, target: Double, periodDays: Int, hoursOffset: Double) =
+    private fun goalBody(name: String, emoji: String?, target: Double, periodDays: Int, hoursOffset: Double, description: String?) =
         JSONObject()
+            .put("description", description ?: JSONObject.NULL)
             .put("name", name)
             .put("emoji", emoji ?: JSONObject.NULL)
             .put("target", target)

@@ -37,12 +37,17 @@ jobs:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
           ALLOWED_EMAILS: ${{ secrets.ALLOWED_EMAILS }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           flyctl secrets set --stage \
             GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
             GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
             SESSION_SECRET="$SESSION_SECRET" \
             ALLOWED_EMAILS="$ALLOWED_EMAILS"
+          # Optional: enables in-app chat and nudges (Claude API).
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            flyctl secrets set --stage ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+          fi
 
       # Persistent volume for the SQLite database (no-op once it exists).
       - name: Ensure data volume exists

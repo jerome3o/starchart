@@ -72,6 +72,7 @@ function goalsWithProgress(email, nowMs = Date.now()) {
         id: g.id,
         name: g.name,
         emoji: g.emoji,
+        description: g.description || null,
         target: g.target,
         period_days: g.period_days,
         hours_offset: g.hours_offset,
@@ -103,6 +104,11 @@ function validateGoalInput(body, { partial = false } = {}) {
     const emoji = body.emoji === null ? null : String(body.emoji).trim();
     if (emoji && [...emoji].length > 4) errors.push('emoji must be at most 4 characters');
     out.emoji = emoji || null;
+  }
+  if (body.description !== undefined) {
+    const description = body.description === null ? null : String(body.description).trim();
+    if (description && description.length > 1000) errors.push('description must be at most 1000 characters');
+    out.description = description || null;
   }
   if (!partial || body.target !== undefined) {
     const target = Number(body.target);
@@ -161,7 +167,7 @@ router.post('/goals', (req, res) => {
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
   const goal = db.createGoal(req.device.email, {
     name: fields.name, emoji: fields.emoji, target: fields.target,
-    periodDays: fields.period_days, hoursOffset: fields.hours_offset,
+    periodDays: fields.period_days, hoursOffset: fields.hours_offset, description: fields.description,
   });
   res.status(201).json(progressForGoal(req.device.email, goal.id));
 });

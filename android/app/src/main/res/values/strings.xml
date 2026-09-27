@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Starchart</string>
+    <string name="nav_chat">Chat</string>
+    <string name="switch_nudges">Sassy Claude nudges</string>
+    <string name="nudges_explain">When you\'re behind on a goal, Claude may roast you into action (8am–10pm, max 5 a day, 4h apart per goal).</string>
+    <string name="nudges_no_key">Needs an Anthropic API key on the server.</string>
+    <string name="nudges_unavailable">Link to the server to use nudges.</string>
+    <string name="chat_title">Claude</string>
+    <string name="chat_new">New chat</string>
+    <string name="chat_hint">Ask Claude anything…</string>
+    <string name="chat_send">Send</string>
+    <string name="chat_thinking">…</string>
+    <string name="chat_not_linked">Link the app to the server first (Settings → Link to server).</string>
+    <string name="hint_goal_description">What is it and why? (Claude uses this)</string>
     <string name="app_function_description">Check habit goal progress and open the slider to log a goal.</string>
     <string name="app_function_display_description">Starchart habit goals</string>
     <string name="app_title">Starchart ⭐</string>

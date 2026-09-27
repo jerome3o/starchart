@@ -66,6 +66,20 @@ CREATE TABLE IF NOT EXISTS phone_commands (
 );
 
 CREATE INDEX IF NOT EXISTS idx_phone_commands_device_status ON phone_commands (device_id, status);
+
+-- Claude-written reminders sent for goals the user is behind on (nudges.js).
+CREATE TABLE IF NOT EXISTS nudges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  goal_id INTEGER NOT NULL,
+  time INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  text TEXT NOT NULL,
+  reason TEXT,
+  command_id INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_nudges_email_time ON nudges (email, time);
 `);
 
 db.exec(`
@@ -177,6 +191,16 @@ if (!displayColumns.includes('presented_key_hash')) {
   db.exec('ALTER TABLE displays ADD COLUMN presented_key_hash TEXT');
 }
 
+const goalColumns = db.prepare('PRAGMA table_info(goals)').all().map((c) => c.name);
+if (!goalColumns.includes('description')) {
+  // Free text: what the goal is and why it matters (used by chat and nudges).
+  db.exec('ALTER TABLE goals ADD COLUMN description TEXT');
+}
+const settingsColumns = db.prepare('PRAGMA table_info(user_settings)').all().map((c) => c.name);
+if (!settingsColumns.includes('nudges_enabled')) {
+  db.exec('ALTER TABLE user_settings ADD COLUMN nudges_enabled INTEGER NOT NULL DEFAULT 1');
+}
+
 function hashToken(token) {
   return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
 }
@@ -259,6 +283,33 @@ function trackingEventsBetween(email, fromMs, toMs) {
        ORDER BY e.time ASC`
     )
     .all(email.toLowerCase(), fromMs, toMs);
+}
+
+// --- Nudges -------------------------------------------------------------------
+
+function recordNudge({ email, goalId, title, text, reason, commandId }) {
+  db.prepare(
+    `INSERT INTO nudges (email, goal_id, time, title, text, reason, command_id) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(email.toLowerCase(), goalId, Date.now(), title, text, reason || null, commandId || null);
+}
+
+function nudgesSince(email, sinceMs) {
+  return db.prepare(
+    `SELECT n.id, n.goal_id, n.time, n.title, n.text, n.reason, g.name AS goal_name
+     FROM nudges n LEFT JOIN goals g ON g.id = n.goal_id
+     WHERE n.email = ? AND n.time >= ? ORDER BY n.time DESC`
+  ).all(email.toLowerCase(), sinceMs);
+}
+
+// Everyone with at least one active goal (the nudge loop's work list).
+function emailsWithGoals() {
+  return db.prepare('SELECT DISTINCT email FROM goals WHERE archived = 0').all().map((r) => r.email);
+}
+
+function recentCompletionTimes(goalId, limit = 20) {
+  return db.prepare(
+    'SELECT time FROM completions WHERE goal_id = ? AND deleted_at IS NULL ORDER BY time DESC LIMIT ?'
+  ).all(goalId, limit).map((r) => r.time);
 }
 
 // --- Phone commands -----------------------------------------------------------
@@ -484,6 +535,18 @@ function getTimezone(email) {
   return row ? row.timezone : 'Europe/London';
 }
 
+function nudgesEnabled(email) {
+  const row = db.prepare('SELECT nudges_enabled FROM user_settings WHERE email = ?').get(email.toLowerCase());
+  return row ? Boolean(row.nudges_enabled) : true;
+}
+
+function setNudgesEnabled(email, enabled) {
+  db.prepare(
+    `INSERT INTO user_settings (email, nudges_enabled) VALUES (?, ?)
+     ON CONFLICT(email) DO UPDATE SET nudges_enabled = excluded.nudges_enabled`
+  ).run(email.toLowerCase(), enabled ? 1 : 0);
+}
+
 function setTimezone(email, timezone) {
   db.prepare(
     `INSERT INTO user_settings (email, timezone) VALUES (?, ?)
@@ -506,22 +569,22 @@ function getGoal(email, id) {
   return db.prepare('SELECT * FROM goals WHERE email = ? AND id = ?').get(email.toLowerCase(), id) || null;
 }
 
-function createGoal(email, { name, emoji, target, periodDays, hoursOffset }) {
+function createGoal(email, { name, emoji, target, periodDays, hoursOffset, description }) {
   const maxOrder = db
     .prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM goals WHERE email = ?')
     .get(email.toLowerCase()).m;
   const info = db
     .prepare(
-      `INSERT INTO goals (email, name, emoji, target, period_days, hours_offset, sort_order, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO goals (email, name, emoji, target, period_days, hours_offset, sort_order, created_at, description)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(email.toLowerCase(), name, emoji || null, target, periodDays, hoursOffset, maxOrder + 1, Date.now());
+    .run(email.toLowerCase(), name, emoji || null, target, periodDays, hoursOffset, maxOrder + 1, Date.now(), description || null);
   return getGoal(email, info.lastInsertRowid);
 }
 
 function updateGoal(email, id, fields) {
   const allowed = { name: 'name', emoji: 'emoji', target: 'target', period_days: 'period_days',
-    hours_offset: 'hours_offset', sort_order: 'sort_order', archived: 'archived' };
+    hours_offset: 'hours_offset', sort_order: 'sort_order', archived: 'archived', description: 'description' };
   const sets = [];
   const values = [];
   for (const [key, column] of Object.entries(allowed)) {
@@ -743,6 +806,8 @@ module.exports = {
   listApiTokens,
   revokeApiToken,
   getTimezone,
+  nudgesEnabled,
+  setNudgesEnabled,
   setTimezone,
   listGoals,
   getGoal,
@@ -772,6 +837,10 @@ module.exports = {
   insertFixes,
   insertTrackingEvents,
   trackingEventsBetween,
+  recordNudge,
+  nudgesSince,
+  emailsWithGoals,
+  recentCompletionTimes,
   queuePhoneCommand,
   pendingCommandCount,
   takePhoneCommands,

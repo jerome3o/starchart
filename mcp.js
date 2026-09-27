@@ -104,6 +104,21 @@ function registerGoalTools(server, email, canWrite) {
     async () => json(goals.goalsWithProgress(email))
   );
 
+  server.registerTool(
+    'get_recent_nudges',
+    {
+      title: 'Recent nudges',
+      description: 'Reminder notifications Claude sent the user for goals they were behind on, newest first, plus whether nudges are enabled.',
+      inputSchema: { days: z.number().int().min(1).max(30).default(3) },
+    },
+    async ({ days }) => json({
+      nudges_enabled: db.nudgesEnabled(email),
+      nudges: db.nudgesSince(email, Date.now() - days * 86400e3).map((n) => ({
+        time: new Date(n.time).toISOString(), goal: n.goal_name, title: n.title, text: n.text, why_sent: n.reason,
+      })),
+    })
+  );
+
   if (!canWrite) return;
 
   server.registerTool(
@@ -154,6 +169,7 @@ function registerGoalTools(server, email, canWrite) {
         target: z.number().positive().max(500).describe('Completions per period'),
         period_days: z.number().int().optional().describe('7 or 14 (default 14)'),
         hours_offset: z.number().min(0).max(48).optional().describe('Grace hours before each day counts'),
+        description: z.string().max(1000).optional().describe('What the goal is and why the user wants it'),
       },
     },
     async (input) => {
@@ -161,9 +177,48 @@ function registerGoalTools(server, email, canWrite) {
       if (errors.length) return error(errors.join('; '));
       const goal = db.createGoal(email, {
         name: fields.name, emoji: fields.emoji, target: fields.target,
-        periodDays: fields.period_days, hoursOffset: fields.hours_offset,
+        periodDays: fields.period_days, hoursOffset: fields.hours_offset, description: fields.description,
       });
       return json({ created: true, goal: goals.progressForGoal(email, goal.id) });
+    }
+  );
+
+  server.registerTool(
+    'update_goal',
+    {
+      title: 'Update a goal',
+      description: "Change a goal's name, emoji, target, period, grace hours or description (what it is and why the user is doing it — nudges use this). Only the fields given change.",
+      inputSchema: {
+        goal_id: z.number().int().optional(),
+        goal_name: z.string().optional().describe('Case-insensitive name match, if goal_id is not given'),
+        name: z.string().min(1).max(60).optional(),
+        emoji: z.string().max(4).optional(),
+        target: z.number().positive().max(500).optional(),
+        period_days: z.number().int().optional().describe('7 or 14'),
+        hours_offset: z.number().min(0).max(48).optional(),
+        description: z.string().max(1000).optional(),
+      },
+    },
+    async ({ goal_id, goal_name, ...changes }) => {
+      const goal = resolveGoal(goal_id, goal_name);
+      if (!goal) return error('No matching goal. Use list_goals to see them.');
+      const { fields, errors } = goals.validateGoalInput(changes, { partial: true });
+      if (errors.length) return error(errors.join('; '));
+      db.updateGoal(email, goal.id, fields);
+      return json({ updated: true, goal: goals.progressForGoal(email, goal.id) });
+    }
+  );
+
+  server.registerTool(
+    'set_nudges_enabled',
+    {
+      title: 'Turn nudges on or off',
+      description: 'Enable or disable the hourly Claude nudge notifications for goals the user is behind on.',
+      inputSchema: { enabled: z.boolean() },
+    },
+    async ({ enabled }) => {
+      db.setNudgesEnabled(email, enabled);
+      return json({ nudges_enabled: enabled });
     }
   );
 }
@@ -185,7 +240,7 @@ function registerOverviewTool(server, email, allowed) {
         out.timezone = data.timezone;
         if (p) out.period = { start: p.startDate, end: p.endDate, day: p.dayOfPeriod + 1, of_days: p.periodDays, days_left: p.daysLeft };
         out.goals = data.goals.map((g) => ({
-          name: g.name, emoji: g.emoji, done: g.count, target: g.target,
+          name: g.name, emoji: g.emoji, description: g.description, done: g.count, target: g.target,
           expected_by_now: g.target_by_now, status: g.count >= g.target ? 'complete' : g.status,
           period_days: g.period_days,
         }));
@@ -523,4 +578,4 @@ async function handleMcpRequest(req, res) {
   await transport.handleRequest(req, res, req.body);
 }
 
-module.exports = { handleMcpRequest };
+module.exports = { handleMcpRequest, buildServer, simplifyListedSchemas };

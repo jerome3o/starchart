@@ -184,11 +184,13 @@ class StarChartFragment : Fragment() {
         val emoji = form.findViewById<EditText>(R.id.input_emoji)
         val target = form.findViewById<EditText>(R.id.input_target)
         val grace = form.findViewById<EditText>(R.id.input_grace)
+        val description = form.findViewById<EditText>(R.id.input_description)
         val periodToggle = form.findViewById<MaterialButtonToggleGroup>(R.id.period_toggle)
 
         if (existing != null) {
             name.setText(existing.name)
             emoji.setText(existing.emoji ?: "")
+            description.setText(existing.description ?: "")
             target.setText(formatNumber(existing.target))
             if (existing.hoursOffset > 0) grace.setText(formatNumber(existing.hoursOffset))
             periodToggle.check(if (existing.periodDays == 7) R.id.period_7 else R.id.period_14)
@@ -209,14 +211,15 @@ class StarChartFragment : Fragment() {
                 val graceValue = grace.text.toString().trim().toDoubleOrNull() ?: 0.0
                 val emojiText = emoji.text.toString().trim().ifEmpty { null }
                 val periodDays = if (periodToggle.checkedButtonId == R.id.period_7) 7 else 14
+                val descriptionText = description.text.toString().trim().ifEmpty { null }
                 when {
                     nameText.isEmpty() -> name.error = getString(R.string.error_goal_name)
                     targetValue == null || targetValue <= 0 -> target.error = getString(R.string.error_goal_target)
                     else -> {
                         dialog.dismiss()
                         mutate(null) {
-                            if (existing == null) GoalsApi.create(context, nameText, emojiText, targetValue, periodDays, graceValue)
-                            else GoalsApi.update(context, existing.id, nameText, emojiText, targetValue, periodDays, graceValue)
+                            if (existing == null) GoalsApi.create(context, nameText, emojiText, targetValue, periodDays, graceValue, descriptionText)
+                            else GoalsApi.update(context, existing.id, nameText, emojiText, targetValue, periodDays, graceValue, descriptionText)
                             null
                         }
                     }
@@ -296,6 +299,7 @@ class StarChartFragment : Fragment() {
         inner class Holder(view: View) : RecyclerView.ViewHolder(view) {
             private val emoji = view.findViewById<TextView>(R.id.goal_emoji)
             private val name = view.findViewById<TextView>(R.id.goal_name)
+            private val description = view.findViewById<TextView>(R.id.goal_description)
             private val count = view.findViewById<TextView>(R.id.goal_count)
             private val bar = view.findViewById<PaceBarView>(R.id.goal_bar)
             private val status = view.findViewById<TextView>(R.id.goal_status)
@@ -306,6 +310,8 @@ class StarChartFragment : Fragment() {
             fun bind(goal: GoalsApi.Goal) {
                 emoji.text = goal.emoji ?: "⭐"
                 name.text = goal.name
+                description.text = goal.description ?: ""
+                description.visibility = if (goal.description.isNullOrBlank()) View.GONE else View.VISIBLE
                 count.text = getString(R.string.goal_count, goal.count, formatNumber(goal.target))
                 bar.set(goal.count, goal.target, goal.targetByNow, goal.isBehind && !goal.complete)
                 status.text = when {
