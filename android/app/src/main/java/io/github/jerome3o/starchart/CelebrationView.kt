@@ -182,8 +182,8 @@ class CelebrationView(context: Context, private val word: String = WORDS.random(
     companion object {
         private const val PIECE_COUNT = 320
         private val WORDS = listOf(
-            "NICE!", "YES!", "BOOM!", "LEGEND", "NAILED IT", "WOO!", "HECK YES",
-            "CRUSHED IT", "STELLAR", "KAPOW!", "ON FIRE", "LET'S GO",
+            "pog", "poggers", "gzgzgz", "great stuff", "hello?",
+            "很好", "太棒了！", "OwO", "恭喜你",
         )
         private const val TOTAL_MS = 3200L
         private const val WORD_OUT_S = 1.5f
