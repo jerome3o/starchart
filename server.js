@@ -68,12 +68,18 @@ function page(title, body) {
 <title>${title}</title>
 <style>
   :root { color-scheme: light dark; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { overflow-x: hidden; }
+  code { overflow-wrap: anywhere; word-break: break-all; }
+  label.scope { display: flex; gap: .5rem; align-items: flex-start; text-align: left; margin: .35rem 0; }
+  label.scope input { margin-top: .2rem; flex: none; }
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
          margin: 0; min-height: 100vh; display: grid; place-items: center;
          background: #0b1020; color: #e6e9f0; }
   .card { background: #151b2e; padding: 2.5rem 2.75rem; border-radius: 16px;
-          box-shadow: 0 10px 40px rgba(0,0,0,.4); max-width: 420px; width: 90%;
-          text-align: center; }
+          box-shadow: 0 10px 40px rgba(0,0,0,.4); max-width: 420px; width: calc(100% - 24px);
+          margin: 12px auto; text-align: center; overflow-wrap: anywhere; }
+  @media (max-width: 480px) { .card { padding: 1.75rem 1.1rem; } }
   h1 { margin: 0 0 .5rem; font-size: 1.6rem; }
   p { color: #9aa4bf; line-height: 1.5; }
   a.btn, button.btn { display: inline-flex; align-items: center; gap: .5rem;
@@ -329,7 +335,7 @@ app.get('/', requireAuth, (req, res) => {
       </li>`).join('')
     : '<li>None. For MCP clients that can\'t sign in with Google, like the Gemini API.</li>';
   const scopeBoxes = Object.entries(SCOPES).map(([k, label]) =>
-    `<label style="margin-right:.6rem;white-space:nowrap"><input type="checkbox" name="scope" value="${k}" ${k === 'goals:write' || k === 'phone:control' ? '' : 'checked'} /> ${esc(label)}</label>`).join(' ');
+    `<label class="scope"><input type="checkbox" name="scope" value="${k}" ${k === 'goals:write' || k === 'phone:control' ? '' : 'checked'} /> ${esc(label)}</label>`).join(' ');
   const displays = db.listDisplays(u.email);
   const displayRows = displays.length
     ? displays
