@@ -76,6 +76,14 @@ The app can upload its location history to the webapp's API:
   failure rate limiting). Nothing is ever deleted, on the phone or the server.
 - **Storage:** SQLite via better-sqlite3 on a Fly volume (`starchart_data`,
   created automatically by the deploy workflow) at `/data`.
+- **Gap diagnostics:** the app logs tracking events (service starts/stops
+  with the reason, process deaths with Android's `ApplicationExitInfo`
+  reason, Doze/battery-saver changes, power state) and uploads them to
+  `POST /api/events`. The MCP tool `find_location_gaps` lists gaps in the
+  fixes along with the events around each one.
+- **Watchdog:** an exact, Doze-exempt alarm every 10 minutes restarts the
+  tracking service if it died, or requests one high-accuracy fix if none has
+  arrived for 8 minutes.
 - **Management:** the webapp home page lists linked devices with fix counts
   and revoke buttons. Revoking only invalidates the token — fixes are kept.
 
@@ -131,7 +139,7 @@ itself:
 
 Tools, gated by scope (`location:read`, `goals:read`, `goals:write`):
 `get_latest_location`, `list_devices`, `list_days_with_data`, `get_day_summary`,
-`get_location_history`, `list_goals`, `log_completion`, `undo_completion`,
+`get_location_history`, `find_location_gaps`, `list_goals`, `log_completion`, `undo_completion`,
 `create_goal` — all scoped to the signed-in user.
 
 **Connect Claude.ai:** Settings → Connectors → Add custom connector → URL

@@ -34,6 +34,20 @@ CREATE TABLE IF NOT EXISTS fixes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fixes_device_time ON fixes (device_id, time);
+
+-- The phone's tracking diagnostics (service starts/stops, process deaths,
+-- power state), used to explain gaps in the fixes. Never deleted.
+CREATE TABLE IF NOT EXISTS tracking_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  client_id INTEGER NOT NULL,
+  time INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  detail TEXT,
+  UNIQUE (device_id, client_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracking_events_device_time ON tracking_events (device_id, time);
 `);
 
 db.exec(`
@@ -206,6 +220,28 @@ const insertFixes = db.transaction((deviceId, fixes) => {
   }
   return accepted;
 });
+
+const insertTrackingEvent = db.prepare(
+  `INSERT OR IGNORE INTO tracking_events (device_id, client_id, time, kind, detail)
+   VALUES (@deviceId, @clientId, @time, @kind, @detail)`
+);
+
+const insertTrackingEvents = db.transaction((deviceId, events) => {
+  let accepted = 0;
+  for (const e of events) accepted += insertTrackingEvent.run({ deviceId, ...e }).changes;
+  return accepted;
+});
+
+function trackingEventsBetween(email, fromMs, toMs) {
+  return db
+    .prepare(
+      `SELECT e.time, e.kind, e.detail, e.device_id AS deviceId
+       FROM tracking_events e JOIN devices d ON d.id = e.device_id
+       WHERE d.email = ? AND e.time >= ? AND e.time < ?
+       ORDER BY e.time ASC`
+    )
+    .all(email.toLowerCase(), fromMs, toMs);
+}
 
 function fixCount(deviceId) {
   return db.prepare('SELECT COUNT(*) AS c FROM fixes WHERE device_id = ?').get(deviceId).c;
@@ -641,6 +677,8 @@ module.exports = {
   revokeDevice,
   setDeviceError,
   insertFixes,
+  insertTrackingEvents,
+  trackingEventsBetween,
   fixCount,
   latestFix,
   fixesBetween,

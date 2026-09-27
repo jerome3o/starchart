@@ -212,7 +212,7 @@ class SettingsFragment : Fragment() {
     private fun startLocationTracking() {
         val context = requireContext()
         Prefs.get(context).edit().putBoolean(Prefs.KEY_TRACKING_ENABLED, true).apply()
-        ContextCompat.startForegroundService(context, Intent(context, LocationService::class.java))
+        LocationService.start(context, "settings")
         view?.findViewById<MaterialSwitch>(R.id.switch_location)?.isChecked = true
     }
 

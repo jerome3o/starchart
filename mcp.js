@@ -335,6 +335,55 @@ function buildServer(email, scopes) {
     }
   );
 
+  server.registerTool(
+    'find_location_gaps',
+    {
+      title: 'Find gaps in location tracking',
+      description: "Periods (max 31-day range) where the phone recorded no location fixes for longer than min_gap_minutes, each with the distance moved across it and the phone's tracking diagnostics logged in and around it (service starts/stops, process deaths with Android's exit reason, watchdog restarts, power state). Use to explain why tracking stopped.",
+      inputSchema: {
+        from: z.string().describe('ISO 8601 start, inclusive'),
+        to: z.string().describe('ISO 8601 end, exclusive'),
+        min_gap_minutes: z.number().min(1).default(15),
+      },
+    },
+    async ({ from, to, min_gap_minutes }) => {
+      const fromMs = Date.parse(from);
+      const toMs = Date.parse(to);
+      if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return error('from/to must be ISO 8601 timestamps');
+      if (toMs <= fromMs) return error('to must be after from');
+      if (toMs - fromMs > MAX_RANGE_MS) return error('range must be at most 31 days');
+      const fixes = db.fixesBetween(email, fromMs, toMs);
+      const events = db.trackingEventsBetween(email, fromMs, toMs);
+      const minGapMs = min_gap_minutes * 60000;
+      const formatEvent = (e) => ({ time: new Date(e.time).toISOString(), kind: e.kind, detail: e.detail, device_id: e.deviceId });
+      // Events a few minutes either side matter too: the death that caused a
+      // gap is often logged by the process that starts after it.
+      const slackMs = 10 * 60000;
+      const gaps = [];
+      for (let i = 1; i < fixes.length; i++) {
+        const a = fixes[i - 1];
+        const b = fixes[i];
+        if (b.time - a.time < minGapMs) continue;
+        gaps.push({
+          start: new Date(a.time).toISOString(),
+          end: new Date(b.time).toISOString(),
+          minutes: Math.round((b.time - a.time) / 60000),
+          moved_m: Math.round(haversineM(a, b)),
+          events: events.filter((e) => e.time >= a.time - slackMs && e.time <= b.time + slackMs).map(formatEvent),
+        });
+      }
+      return json({
+        from: new Date(fromMs).toISOString(),
+        to: new Date(toMs).toISOString(),
+        fixes: fixes.length,
+        first_fix: fixes.length ? new Date(fixes[0].time).toISOString() : null,
+        last_fix: fixes.length ? new Date(fixes[fixes.length - 1].time).toISOString() : null,
+        diagnostics_logged: events.length,
+        gaps,
+      });
+    }
+  );
+
   return server;
 }
 

@@ -23,21 +23,24 @@ class BootReceiver : BroadcastReceiver() {
             intent.action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) return
         if (!Prefs.get(context).getBoolean(Prefs.KEY_TRACKING_ENABLED, false)) return
+        val reason = if (intent.action == Intent.ACTION_BOOT_COMPLETED) "boot" else "app_updated"
+        TrackingWatchdog.schedule(context)
 
         val hasBackgroundLocation = Build.VERSION.SDK_INT < 29 ||
             ContextCompat.checkSelfPermission(
                 context, Manifest.permission.ACCESS_BACKGROUND_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
-        if (!hasBackgroundLocation) return
+        if (!hasBackgroundLocation) {
+            TrackingLog.log(context, "start_failed", "$reason: no background location permission")
+            return
+        }
 
         try {
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, LocationService::class.java)
-            )
-        } catch (_: Exception) {
+            LocationService.start(context, reason)
+        } catch (e: Exception) {
             // Background FGS start refused (e.g. no battery-optimization
-            // exemption); the app resumes tracking next time it's opened.
+            // exemption); the watchdog retries, and opening the app always works.
+            TrackingLog.log(context, "start_failed", "$reason: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 }
