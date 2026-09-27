@@ -122,6 +122,19 @@ CREATE TABLE IF NOT EXISTS displays (
 );
 `);
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  scope TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  revoked INTEGER NOT NULL DEFAULT 0
+);
+`);
+
 // Schema additions after the first release (SQLite has no ADD COLUMN IF NOT EXISTS).
 const deviceColumns = db.prepare('PRAGMA table_info(devices)').all().map((c) => c.name);
 if (!deviceColumns.includes('last_error')) {
@@ -560,8 +573,46 @@ function touchDisplay(id, { batteryVoltage, fwVersion, rssi }) {
   ).run(Date.now(), batteryVoltage ?? null, fwVersion || null, rssi ?? null, id);
 }
 
+// --- Personal API tokens (for MCP clients that can't do OAuth, e.g. Gemini) --
+
+// Returns the plaintext token exactly once; only its hash is stored. The
+// sc_ prefix makes them recognisable (and tells the bearer guard which table).
+function createApiToken(email, name, scope) {
+  const token = `sc_${crypto.randomBytes(32).toString('hex')}`;
+  db.prepare(
+    'INSERT INTO api_tokens (email, name, token_hash, scope, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(email.toLowerCase(), String(name).slice(0, 60), hashToken(token), scope, Date.now());
+  return token;
+}
+
+function apiTokenGrant(token) {
+  const row = db
+    .prepare('SELECT id, email, name, scope FROM api_tokens WHERE token_hash = ? AND revoked = 0')
+    .get(hashToken(token));
+  if (!row) return null;
+  db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').run(Date.now(), row.id);
+  return { email: row.email, scope: row.scope, client_name: row.name, client_id: `token:${row.id}` };
+}
+
+function listApiTokens(email) {
+  return db
+    .prepare(
+      `SELECT id, name, scope, created_at, last_used_at FROM api_tokens
+       WHERE email = ? AND revoked = 0 ORDER BY created_at`
+    )
+    .all(email.toLowerCase());
+}
+
+function revokeApiToken(email, id) {
+  db.prepare('UPDATE api_tokens SET revoked = 1 WHERE email = ? AND id = ?').run(email.toLowerCase(), id);
+}
+
 module.exports = {
   hashToken,
+  createApiToken,
+  apiTokenGrant,
+  listApiTokens,
+  revokeApiToken,
   getTimezone,
   setTimezone,
   listGoals,

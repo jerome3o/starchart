@@ -138,6 +138,32 @@ Tools, gated by scope (`location:read`, `goals:read`, `goals:write`):
 `https://starchart.fly.dev/mcp` → Connect. You'll be sent through Google
 login and a consent page; after that Claude can call the tools.
 
+## Gemini (and other MCP clients without OAuth)
+
+Clients that can't do the interactive Google-login OAuth flow — like the
+Gemini API — use **personal API tokens**: on the home page, *API tokens* →
+pick scopes → *Create token*. The token (`sc_…`) is shown once, stored only as
+a hash, revocable, and accepted by `/mcp` as `Authorization: Bearer sc_…`.
+
+`examples/gemini_starchart.py` connects to the MCP server with that token and
+hands the session to Gemini as tools (google-genai + mcp Python SDKs):
+
+```sh
+pip install -r examples/requirements.txt
+export GEMINI_API_KEY=...   STARCHART_TOKEN=sc_...
+python examples/gemini_starchart.py --check                  # Starchart only
+python examples/gemini_starchart.py "How am I going this fortnight?"
+```
+
+`get_overview` is a one-call snapshot (period, each goal's pace, latest
+location — whatever the token's scopes allow). Listed tool schemas omit
+boolean sub-schemas (`additionalProperties: false`) because the Gemini SDK's
+converter crashes on them; arguments are still validated server-side.
+
+Gemini *on the phone* calling the app would use Android App Functions
+(Android 16+), which as of mid-2026 is a private preview for Gemini, so it
+isn't wired up yet.
+
 ## Webapp
 
 A minimal Express webapp with Google OAuth login, deployed to [Fly.io](https://fly.io)

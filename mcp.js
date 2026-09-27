@@ -168,10 +168,48 @@ function registerGoalTools(server, email, canWrite) {
   );
 }
 
+// One-call "how am I doing" snapshot; includes whatever the grant's scopes allow.
+function registerOverviewTool(server, email, allowed) {
+  server.registerTool(
+    'get_overview',
+    {
+      title: 'Overview',
+      description: "A quick snapshot of the user's day: where they are in the current goal period, each goal's progress and pace, and (if permitted) their latest location. A good first call.",
+      inputSchema: {},
+    },
+    async () => {
+      const out = { now: new Date().toISOString() };
+      if (allowed.goals) {
+        const data = goals.goalsWithProgress(email);
+        const p = data.periods[14] || Object.values(data.periods)[0];
+        out.timezone = data.timezone;
+        if (p) out.period = { start: p.startDate, end: p.endDate, day: p.dayOfPeriod + 1, of_days: p.periodDays, days_left: p.daysLeft };
+        out.goals = data.goals.map((g) => ({
+          name: g.name, emoji: g.emoji, done: g.count, target: g.target,
+          expected_by_now: g.target_by_now, status: g.count >= g.target ? 'complete' : g.status,
+          period_days: g.period_days,
+        }));
+        out.summary = {
+          on_track: out.goals.filter((g) => g.status !== 'behind').length,
+          behind: out.goals.filter((g) => g.status === 'behind').map((g) => g.name),
+        };
+      }
+      if (allowed.location) {
+        const fix = db.latestFix(email);
+        out.latest_location = fix
+          ? { ...formatFix(fix), age_minutes: Math.round((Date.now() - fix.time) / 60000) }
+          : null;
+      }
+      return json(out);
+    }
+  );
+}
+
 function buildServer(email, scopes) {
   const server = new McpServer({ name: 'starchart', version: '1.1.0' });
   const has = (s) => scopes.includes(s);
 
+  registerOverviewTool(server, email, { goals: has('goals:read'), location: has('location:read') });
   if (has('goals:read')) registerGoalTools(server, email, has('goals:write'));
   if (!has('location:read')) return server;
 
@@ -300,10 +338,40 @@ function buildServer(email, scopes) {
   return server;
 }
 
+// Some MCP clients (notably the Gemini SDK) crash on boolean sub-schemas such as
+// `additionalProperties: false`. Arguments are still validated server-side
+// against the zod schemas, so the listed schemas can safely drop them.
+function clientFriendlySchema(schema) {
+  if (Array.isArray(schema)) return schema.map(clientFriendlySchema);
+  if (!schema || typeof schema !== 'object') return schema;
+  const out = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === '$schema') continue;
+    if (typeof value === 'boolean' && (key === 'additionalProperties' || key === 'items')) continue;
+    out[key] = clientFriendlySchema(value);
+  }
+  return out;
+}
+
+function simplifyListedSchemas(server) {
+  const handlers = server.server._requestHandlers;
+  const original = handlers && handlers.get('tools/list');
+  if (!original) return;
+  handlers.set('tools/list', async (request, extra) => {
+    const result = await original(request, extra);
+    for (const tool of result.tools || []) {
+      tool.inputSchema = clientFriendlySchema(tool.inputSchema);
+      if (tool.outputSchema) tool.outputSchema = clientFriendlySchema(tool.outputSchema);
+    }
+    return result;
+  });
+}
+
 // One server + transport per request: stateless, nothing to leak between
 // users, and it scales to zero with the Fly machine.
 async function handleMcpRequest(req, res) {
   const server = buildServer(req.grant.email, req.grant.scope.split(' '));
+  simplifyListedSchemas(server);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => {
     transport.close();

@@ -246,7 +246,9 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
       if (limiter.blocked(req.ip)) return res.status(429).json({ error: 'too_many_requests' });
       const header = req.get('authorization') || '';
       const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-      const grant = token ? db.grantForAccessToken(token) : null;
+      const grant = !token ? null
+        : token.startsWith('sc_') ? db.apiTokenGrant(token)
+        : db.grantForAccessToken(token);
       if (!grant) {
         limiter.fail(req.ip);
         return challenge();
@@ -263,4 +265,4 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
   return { router, requireBearer };
 }
 
-module.exports = { createOAuthRouter };
+module.exports = { createOAuthRouter, SCOPES };
