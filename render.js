@@ -272,8 +272,48 @@ function canvasToPng1bit(canvas) {
   ]);
 }
 
+// 800x480 1-bit BMP in exactly the layout TRMNL firmware accepts for its
+// setup image: 62-byte header (incl. 2-colour table: 0 = black, 1 = white),
+// 48000 bytes of bottom-up rows, 48062 bytes total.
+function canvasToBmp1bit(canvas) {
+  const { width, height } = canvas;
+  const rgba = canvas.getContext('2d').getImageData(0, 0, width, height).data;
+  const rowBytes = Math.ceil(width / 32) * 4;
+  const dataSize = rowBytes * height;
+  const buf = Buffer.alloc(62 + dataSize);
+  buf.write('BM', 0, 'ascii');
+  buf.writeUInt32LE(buf.length, 2);
+  buf.writeUInt32LE(62, 10); // pixel data offset
+  buf.writeUInt32LE(40, 14); // BITMAPINFOHEADER
+  buf.writeInt32LE(width, 18);
+  buf.writeInt32LE(height, 22); // positive = bottom-up
+  buf.writeUInt16LE(1, 26); // planes
+  buf.writeUInt16LE(1, 28); // bits per pixel
+  buf.writeUInt32LE(0, 30); // BI_RGB
+  buf.writeUInt32LE(dataSize, 34);
+  buf.writeUInt32LE(2835, 38);
+  buf.writeUInt32LE(2835, 42);
+  buf.writeUInt32LE(2, 46); // colours used
+  buf.writeUInt32LE(2, 50);
+  buf.writeUInt32LE(0x00000000, 54); // index 0: black
+  buf.writeUInt32LE(0x00ffffff, 58); // index 1: white
+  for (let y = 0; y < height; y++) {
+    const rowStart = 62 + (height - 1 - y) * rowBytes;
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const lum = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
+      if (lum > 190) buf[rowStart + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+  }
+  return buf;
+}
+
+function renderDashboardBmp(email, nowMs = Date.now()) {
+  return canvasToBmp1bit(drawDashboard(email, nowMs));
+}
+
 function renderDashboardPng(email, nowMs = Date.now()) {
   return canvasToPng1bit(drawDashboard(email, nowMs));
 }
 
-module.exports = { drawDashboard, drawDashboardData, renderDashboardPng, canvasToPng1bit, WIDTH, HEIGHT };
+module.exports = { drawDashboard, drawDashboardData, renderDashboardPng, renderDashboardBmp, canvasToPng1bit, canvasToBmp1bit, WIDTH, HEIGHT };

@@ -72,7 +72,8 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
         status: 200,
         api_key: key,
         friendly_id: display.friendly_id,
-        image_url: `${issuer}/display-image/${imageToken(display.id)}.png`,
+        // The firmware's setup-image download only accepts an exact-size 1-bit BMP.
+        image_url: `${issuer}/display-image/${imageToken(display.id)}.bmp`,
         message: 'Welcome to Starchart',
       });
     }
@@ -138,14 +139,15 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
     res.json({ status: 'success', message: 'Log data received' });
   });
 
-  router.get('/display-image/:token.png', (req, res) => {
+  router.get('/display-image/:token.:ext(png|bmp)', (req, res) => {
     const id = verifyImageToken(req.params.token);
     const row = id === null ? null : db.getDisplayById(id);
     if (!row || row.status !== 'active' || !row.email) return res.status(404).end();
-    res.set('Content-Type', 'image/png');
+    const bmp = req.params.ext === 'bmp';
+    res.set('Content-Type', bmp ? 'image/bmp' : 'image/png');
     res.set('Cache-Control', 'no-store');
-    console.log(`[display] image ${row.friendly_id}`);
-    res.send(render.renderDashboardPng(row.email));
+    console.log(`[display] image ${row.friendly_id} (${req.params.ext})`);
+    res.send(bmp ? render.renderDashboardBmp(row.email) : render.renderDashboardPng(row.email));
   });
 
   // --- Web page management (session-authed) ----------------------------------
