@@ -51,7 +51,8 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
 
   // --- TRMNL device protocol -------------------------------------------------
 
-  router.post('/api/setup', (req, res) => {
+  // TRMNL firmware calls GET /api/setup; POST is kept for other BYOS clients.
+  const setupHandler = (req, res) => {
     if (limiter.blocked(req.ip)) return res.status(429).json({ status: 429, message: 'slow down' });
     const mac = normalizeMac(req.get('ID'));
     if (!mac) {
@@ -81,7 +82,9 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
       status: 202,
       message: `Approve this display (${display.friendly_id}) at ${issuer} then retry setup`,
     });
-  });
+  };
+  router.get('/api/setup', setupHandler);
+  router.post('/api/setup', setupHandler);
 
   router.get('/api/display', (req, res) => {
     if (limiter.blocked(req.ip)) return res.status(429).json({ status: 429, message: 'slow down' });
