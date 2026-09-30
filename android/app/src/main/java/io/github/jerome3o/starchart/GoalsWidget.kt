@@ -137,12 +137,23 @@ class GoalsWidgetProvider : AppWidgetProvider() {
                 context.getString(if (Sync.isLinked(context)) R.string.widget_empty else R.string.goals_unlinked)
             )
 
-            // As many rows as fit (~50dp each under a ~34dp header), then "+N more".
-            val fits = ((heightDp - 28 - 34) / 50).coerceAtLeast(1)
+            // Normal: header + ~50dp rows. If every goal fits once the header
+            // goes (with tighter ~42dp rows if needed), drop it; otherwise keep
+            // the header and show as many as fit, then "+N more".
+            val inner = heightDp - 28
+            val compact = goals.size * 50 > inner - 34 && goals.size * 42 <= heightDp - 20
+            val noHeader = compact || (goals.size * 50 > inner - 34 && goals.size * 50 <= inner)
+            val tight = compact && goals.size * 50 > inner
+            val fits = if (noHeader) goals.size else ((inner - 34) / 50).coerceAtLeast(1)
             val shown = if (goals.size > fits) goals.take((fits - 1).coerceAtLeast(1)) else goals
-            val barWidthPx = ((widthDp - 28 - 44) * d).toInt()
+            views.setViewVisibility(R.id.widget_header, if (noHeader) View.GONE else View.VISIBLE)
+            val pad = (14 * d).toInt()
+            val padV = if (tight) (10 * d).toInt() else pad
+            views.setViewPadding(R.id.widget_root, pad, padV, pad, padV)
+            val barWidthPx = ((widthDp - 28 - if (tight) 40 else 44) * d).toInt()
+            val rowLayout = if (tight) R.layout.widget_goal_item_compact else R.layout.widget_goal_item
             for (g in shown) {
-                views.addView(R.id.widget_list, rowViews(context, g, snapshot!!, barWidthPx, now, zone))
+                views.addView(R.id.widget_list, rowViews(context, g, snapshot!!, barWidthPx, now, zone, rowLayout))
             }
             val hidden = goals.size - shown.size
             views.setViewVisibility(R.id.widget_more, if (hidden > 0) View.VISIBLE else View.GONE)
@@ -161,9 +172,9 @@ class GoalsWidgetProvider : AppWidgetProvider() {
 
         private fun rowViews(
             context: Context, g: GoalsApi.Goal, snapshot: GoalsApi.Snapshot,
-            barWidthPx: Int, now: Long, zone: ZoneId,
+            barWidthPx: Int, now: Long, zone: ZoneId, layout: Int,
         ): RemoteViews {
-            val row = RemoteViews(context.packageName, R.layout.widget_goal_item)
+            val row = RemoteViews(context.packageName, layout)
             row.setTextViewText(R.id.widget_goal_name, "${g.emoji ?: "⭐"}  ${g.name}")
             val target = if (g.target == Math.floor(g.target)) g.target.toLong().toString() else g.target.toString()
             row.setTextViewText(R.id.widget_goal_count, "${g.count}/$target")
