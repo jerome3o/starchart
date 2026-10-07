@@ -16,6 +16,20 @@ object Notifications {
 
     const val CHANNEL_ID = "reminders"
     const val SERVICE_CHANNEL_ID = "services"
+    const val DAILY_REMINDER_WORK = "daily-reminder"
+    private const val KEY_RECURRING_OFF = "recurring_notifications_off_v1"
+
+    /**
+     * Recurring reminders are opt-in: switches the daily reminder off once
+     * (cancelling any scheduled work) for installs that had it on. Nudges are
+     * opt-in on the server. The Settings switches can turn either back on.
+     */
+    fun turnOffRecurringOnce(context: Context) {
+        val prefs = Prefs.get(context)
+        if (prefs.getBoolean(KEY_RECURRING_OFF, false)) return
+        prefs.edit().putBoolean(Prefs.KEY_DAILY_REMINDER, false).putBoolean(KEY_RECURRING_OFF, true).apply()
+        androidx.work.WorkManager.getInstance(context).cancelUniqueWork(DAILY_REMINDER_WORK)
+    }
 
     fun ensureChannel(context: Context) {
         val channel = NotificationChannel(

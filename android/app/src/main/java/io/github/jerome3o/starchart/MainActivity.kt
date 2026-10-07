@@ -29,6 +29,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         Notifications.ensureChannel(this)
+        Notifications.turnOffRecurringOnce(this)
         if (Build.VERSION.SDK_INT >= 33 && !Permissions.canNotify(this)) {
             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }

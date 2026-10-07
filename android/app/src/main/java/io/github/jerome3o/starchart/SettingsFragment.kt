@@ -383,10 +383,10 @@ class SettingsFragment : Fragment() {
                     )
                     .build()
                 WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                    DAILY_REMINDER_WORK, ExistingPeriodicWorkPolicy.UPDATE, request
+                    Notifications.DAILY_REMINDER_WORK, ExistingPeriodicWorkPolicy.UPDATE, request
                 )
             } else {
-                WorkManager.getInstance(context).cancelUniqueWork(DAILY_REMINDER_WORK)
+                WorkManager.getInstance(context).cancelUniqueWork(Notifications.DAILY_REMINDER_WORK)
             }
         }
     }
@@ -421,6 +421,5 @@ class SettingsFragment : Fragment() {
     }
 
     companion object {
-        private const val DAILY_REMINDER_WORK = "daily-reminder"
     }
 }

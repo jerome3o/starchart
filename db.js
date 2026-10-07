@@ -200,6 +200,11 @@ const settingsColumns = db.prepare('PRAGMA table_info(user_settings)').all().map
 if (!settingsColumns.includes('nudges_enabled')) {
   db.exec('ALTER TABLE user_settings ADD COLUMN nudges_enabled INTEGER NOT NULL DEFAULT 1');
 }
+// Nudges became opt-in: a fresh column so everyone (including people who had
+// the old default-on setting) starts with them off. nudges_enabled is unused.
+if (!settingsColumns.includes('nudges_opt_in')) {
+  db.exec('ALTER TABLE user_settings ADD COLUMN nudges_opt_in INTEGER NOT NULL DEFAULT 0');
+}
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
@@ -536,14 +541,14 @@ function getTimezone(email) {
 }
 
 function nudgesEnabled(email) {
-  const row = db.prepare('SELECT nudges_enabled FROM user_settings WHERE email = ?').get(email.toLowerCase());
-  return row ? Boolean(row.nudges_enabled) : true;
+  const row = db.prepare('SELECT nudges_opt_in FROM user_settings WHERE email = ?').get(email.toLowerCase());
+  return row ? Boolean(row.nudges_opt_in) : false;
 }
 
 function setNudgesEnabled(email, enabled) {
   db.prepare(
-    `INSERT INTO user_settings (email, nudges_enabled) VALUES (?, ?)
-     ON CONFLICT(email) DO UPDATE SET nudges_enabled = excluded.nudges_enabled`
+    `INSERT INTO user_settings (email, nudges_opt_in) VALUES (?, ?)
+     ON CONFLICT(email) DO UPDATE SET nudges_opt_in = excluded.nudges_opt_in`
   ).run(email.toLowerCase(), enabled ? 1 : 0);
 }
 
