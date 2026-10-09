@@ -1,7 +1,6 @@
 package io.github.jerome3o.starchart
 
 import android.app.DatePickerDialog
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
@@ -377,12 +376,10 @@ class MapFragment : Fragment() {
         source.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
-    /** First tap finds the photo on the map; a second tap opens it. */
-    private fun selectPhoto(p: DayPhotos.Photo) {
+    /** First tap finds the photo on the map; a second tap opens the full-screen viewer. */
+    private fun selectPhoto(p: DayPhotos.Photo, quiet: Boolean = false) {
         if (selectedPhoto == p.id) {
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, p.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-            } catch (_: Exception) {}
+            if (!quiet) PhotoViewer(requireContext(), photos, photos.indexOf(p)) { shown -> selectPhoto(shown, quiet = true) }.show()
             return
         }
         val previous = photos.indexOfFirst { it.id == selectedPhoto }
@@ -398,7 +395,7 @@ class MapFragment : Fragment() {
             DayPhotos.Source.TRACK -> getString(R.string.map_photo_approx, time)
             DayPhotos.Source.NONE -> getString(R.string.map_photo_no_location, time)
         }
-        Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+        if (!quiet) Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
         val m = map ?: return
         if (p.lat != null) {
             m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(p.lat, p.lon!!), maxOf(m.cameraPosition.zoom, 16.0)))
