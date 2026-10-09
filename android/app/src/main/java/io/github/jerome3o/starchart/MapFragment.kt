@@ -1,16 +1,27 @@
 package io.github.jerome3o.starchart
 
 import android.app.DatePickerDialog
+import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
 import android.location.Location
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.google.gson.JsonObject
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -24,6 +35,7 @@ import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
@@ -39,6 +51,10 @@ import java.time.format.FormatStyle
  * Day-by-day explorer of the phone's own location history, drawn with
  * MapLibre on OpenFreeMap vector tiles (no API key). Reads straight from the
  * local database, so it works whether or not the server is reachable.
+ *
+ * With photo access, the day's gallery photos appear as round thumbnails on
+ * the map (at their GPS tag, or where the track was when they were taken)
+ * and in a strip along the bottom: tap one to find it, tap again to open it.
  */
 class MapFragment : Fragment() {
 
@@ -50,6 +66,17 @@ class MapFragment : Fragment() {
     private var day: LocalDate = LocalDate.now()
     private var daysWithData: List<LocalDate> = emptyList()
     private var pickedInitialDay = false
+
+    private val main = Handler(Looper.getMainLooper())
+    private var photos: List<DayPhotos.Photo> = emptyList()
+    private var thumbs: Map<Long, Bitmap> = emptyMap()
+    private var photoIcons: Set<String> = emptySet()
+    private var selectedPhoto: Long? = null
+    private var photoLoad = 0
+    private var photoStrip: RecyclerView? = null
+
+    private val requestPhotos =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { show(day) }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -74,6 +101,14 @@ class MapFragment : Fragment() {
                 { _, year, month, dayOfMonth -> show(LocalDate.of(year, month + 1, dayOfMonth)) },
                 day.year, day.monthValue - 1, day.dayOfMonth
             ).show()
+        }
+
+        view.findViewById<Button>(R.id.btn_photos).setOnClickListener {
+            requestPhotos.launch(DayPhotos.permissions())
+        }
+        photoStrip = view.findViewById<RecyclerView>(R.id.photo_strip).also {
+            it.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+            it.adapter = stripAdapter
         }
 
         mapView?.getMapAsync { m ->
@@ -113,6 +148,8 @@ class MapFragment : Fragment() {
     private fun addLayers(s: Style) {
         s.addSource(GeoJsonSource(SRC_LINE))
         s.addSource(GeoJsonSource(SRC_POINTS))
+        s.addSource(GeoJsonSource(SRC_PHOTOS))
+        photoIcons = emptySet() // a new style has none of the old images
         // A white casing under a black line stays visible on any basemap,
         // light or dark, instead of blending into yellow roads.
         s.addLayer(
@@ -155,6 +192,19 @@ class MapFragment : Fragment() {
                 ),
             )
         )
+        s.addLayer(
+            SymbolLayer(LAYER_PHOTOS, SRC_PHOTOS).withProperties(
+                PropertyFactory.iconImage(Expression.get("icon")),
+                PropertyFactory.iconSize(
+                    Expression.switchCase(Expression.has("selected"), Expression.literal(1.6f), Expression.literal(1f))
+                ),
+                PropertyFactory.iconAllowOverlap(true),
+                PropertyFactory.iconIgnorePlacement(true),
+                PropertyFactory.symbolSortKey(
+                    Expression.switchCase(Expression.has("selected"), Expression.literal(1f), Expression.literal(0f))
+                ),
+            )
+        )
     }
 
     private fun show(newDay: LocalDate) {
@@ -179,6 +229,7 @@ class MapFragment : Fragment() {
         val lineSource = s.getSourceAs<GeoJsonSource>(SRC_LINE)
         val pointSource = s.getSourceAs<GeoJsonSource>(SRC_POINTS)
 
+        loadPhotos(from, to, good)
         if (all.isEmpty()) {
             stats.text = getString(R.string.map_no_fixes)
             lineSource?.setGeoJson(FeatureCollection.fromFeatures(emptyList()))
@@ -247,8 +298,162 @@ class MapFragment : Fragment() {
         }
     }
 
+    // --- Photos ------------------------------------------------------------------
+
+    /** Loads the day's photos off the main thread and draws them when ready. */
+    private fun loadPhotos(from: Long, to: Long, fixes: List<LocationDb.StoredFix>) {
+        val context = requireContext().applicationContext
+        val view = view ?: return
+        val token = ++photoLoad
+        val canRead = DayPhotos.canRead(context)
+        view.findViewById<Button>(R.id.btn_photos).visibility = if (canRead) View.GONE else View.VISIBLE
+        if (!canRead) {
+            setPhotos(emptyList(), emptyMap(), emptyMap())
+            return
+        }
+        val density = resources.displayMetrics.density
+        val markerPx = (46 * density).toInt()
+        Thread {
+            val list = DayPhotos.load(context, from, to, fixes)
+            val stripThumbs = HashMap<Long, Bitmap>()
+            val markers = HashMap<String, Bitmap>()
+            for (p in list) {
+                if (token != photoLoad) return@Thread
+                val thumb = DayPhotos.thumbnail(context, p.uri, (80 * density).toInt()) ?: continue
+                stripThumbs[p.id] = thumb
+                if (p.lat != null) markers[iconId(p.id)] = DayPhotos.marker(thumb, markerPx, 3 * density)
+            }
+            main.post { if (token == photoLoad && isAdded) setPhotos(list, stripThumbs, markers) }
+        }.start()
+    }
+
+    private fun iconId(id: Long) = "photo-$id"
+
+    private fun setPhotos(list: List<DayPhotos.Photo>, stripThumbs: Map<Long, Bitmap>, markers: Map<String, Bitmap>) {
+        photos = list
+        thumbs = stripThumbs
+        selectedPhoto = null
+        stripAdapter.notifyDataSetChanged()
+        photoStrip?.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
+        val s = style ?: return
+        photoIcons.forEach { s.removeImage(it) }
+        if (markers.isNotEmpty()) s.addImages(HashMap(markers))
+        photoIcons = markers.keys
+        drawPhotoMarkers()
+
+        val located = list.filter { it.lat != null }
+        val stats = view?.findViewById<TextView>(R.id.map_stats)
+        if (list.isNotEmpty() && stats != null) {
+            val base = stats.text.toString().substringBefore("\n📷")
+            stats.text = base + "\n📷 " + getString(R.string.map_photos_count, list.size, located.size)
+        }
+        // A day with photos but no tracked fixes: frame the photos instead.
+        if (located.isNotEmpty() && db.fixesBetween(
+                day.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            ).isEmpty()
+        ) {
+            val m = map ?: return
+            if (located.size == 1) {
+                m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(located[0].lat!!, located[0].lon!!), 15.0))
+            } else {
+                val bounds = LatLngBounds.Builder()
+                located.forEach { bounds.include(LatLng(it.lat!!, it.lon!!)) }
+                m.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), 120))
+            }
+        }
+    }
+
+    private fun drawPhotoMarkers() {
+        val source = style?.getSourceAs<GeoJsonSource>(SRC_PHOTOS) ?: return
+        val features = photos.filter { it.lat != null && iconId(it.id) in photoIcons }.map { p ->
+            val props = JsonObject().apply {
+                addProperty("photo", p.id)
+                addProperty("icon", iconId(p.id))
+                if (p.id == selectedPhoto) addProperty("selected", true)
+            }
+            Feature.fromGeometry(Point.fromLngLat(p.lon!!, p.lat!!), props)
+        }
+        source.setGeoJson(FeatureCollection.fromFeatures(features))
+    }
+
+    /** First tap finds the photo on the map; a second tap opens it. */
+    private fun selectPhoto(p: DayPhotos.Photo) {
+        if (selectedPhoto == p.id) {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, p.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            } catch (_: Exception) {}
+            return
+        }
+        val previous = photos.indexOfFirst { it.id == selectedPhoto }
+        selectedPhoto = p.id
+        val index = photos.indexOf(p)
+        if (previous >= 0) stripAdapter.notifyItemChanged(previous)
+        stripAdapter.notifyItemChanged(index)
+        photoStrip?.smoothScrollToPosition(index)
+        drawPhotoMarkers()
+        val time = Instant.ofEpochMilli(p.takenMs).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
+        val message = when (p.source) {
+            DayPhotos.Source.PHOTO_GPS -> getString(R.string.map_photo_tap_again, time)
+            DayPhotos.Source.TRACK -> getString(R.string.map_photo_approx, time)
+            DayPhotos.Source.NONE -> getString(R.string.map_photo_no_location, time)
+        }
+        Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+        val m = map ?: return
+        if (p.lat != null) {
+            m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(p.lat, p.lon!!), maxOf(m.cameraPosition.zoom, 16.0)))
+        }
+    }
+
+    private val stripAdapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+        override fun getItemCount() = photos.size
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+            val d = parent.resources.displayMetrics.density
+            val frame = FrameLayout(parent.context).apply {
+                layoutParams = RecyclerView.LayoutParams((80 * d).toInt(), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                    marginEnd = (6 * d).toInt()
+                }
+                setPadding((2 * d).toInt(), (2 * d).toInt(), (2 * d).toInt(), (2 * d).toInt())
+            }
+            frame.addView(ImageView(parent.context).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                clipToOutline = true
+                background = GradientDrawable().apply { cornerRadius = 10 * d; setColor(0xFF333333.toInt()) }
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            frame.addView(TextView(parent.context).apply {
+                textSize = 10f
+                setTextColor(0xFFFFFFFF.toInt())
+                setShadowLayer(3f, 0f, 0f, 0xFF000000.toInt())
+                setPadding((5 * d).toInt(), 0, (5 * d).toInt(), (3 * d).toInt())
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
+            return object : RecyclerView.ViewHolder(frame) {}
+        }
+
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            val p = photos[position]
+            val frame = holder.itemView as FrameLayout
+            val d = frame.resources.displayMetrics.density
+            (frame.getChildAt(0) as ImageView).setImageBitmap(thumbs[p.id])
+            val time = Instant.ofEpochMilli(p.takenMs).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
+            (frame.getChildAt(1) as TextView).text = when (p.source) {
+                DayPhotos.Source.PHOTO_GPS -> "📍 $time"
+                DayPhotos.Source.TRACK -> "≈ $time"
+                DayPhotos.Source.NONE -> time
+            }
+            frame.background = if (p.id == selectedPhoto) GradientDrawable().apply {
+                cornerRadius = 12 * d; setColor(0x00000000); setStroke((2.5f * d).toInt(), 0xFFFFC93C.toInt())
+            } else null
+            frame.setOnClickListener { selectPhoto(p) }
+        }
+    }
+
     private fun onTap(m: MapLibreMap, latLng: LatLng): Boolean {
         val screen = m.projection.toScreenLocation(latLng)
+        val photoArea = RectF(screen.x - 40f, screen.y - 40f, screen.x + 40f, screen.y + 40f)
+        m.queryRenderedFeatures(photoArea, LAYER_PHOTOS).firstOrNull()?.getNumberProperty("photo")?.toLong()?.let { id ->
+            photos.firstOrNull { it.id == id }?.let { selectPhoto(it); return true }
+        }
         val touchArea = RectF(screen.x - 30f, screen.y - 30f, screen.x + 30f, screen.y + 30f)
         val hit = m.queryRenderedFeatures(touchArea, LAYER_POINTS).firstOrNull() ?: return false
         val time = hit.getNumberProperty("time")?.toLong() ?: return false
@@ -295,6 +500,8 @@ class MapFragment : Fragment() {
         private const val LAYER_LINE_CASING = "fix-line-casing"
         private const val LAYER_LINE = "fix-line"
         private const val LAYER_POINTS = "fix-points"
+        private const val SRC_PHOTOS = "photos-src"
+        private const val LAYER_PHOTOS = "photos"
         private const val GOLD = "#ffc93c"
     }
 }

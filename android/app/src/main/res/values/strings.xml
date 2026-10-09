@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Starchart</string>
+    <string name="map_show_photos">📷 Show my photos on the map</string>
+    <string name="map_photos_count">%1$d photos · %2$d on the map</string>
+    <string name="map_photo_tap_again">%1$s · tap again to open</string>
+    <string name="map_photo_no_location">%1$s · no location for this one</string>
+    <string name="map_photo_approx">%1$s · placed from your track (approx.) · tap again to open</string>
     <string name="nav_chat">Chat</string>
     <string name="switch_nudges">Sassy Claude nudges</string>
     <string name="nudges_explain">Off by default. When on and you\'re behind on a goal, Claude may roast you into action (8am–10pm, max 5 a day, 4h apart per goal).</string>
