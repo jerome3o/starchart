@@ -59,6 +59,7 @@ dependencies {
     implementation("org.maplibre.gl:android-sdk:11.8.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+    implementation("androidx.exifinterface:exifinterface:1.4.2")
 
     // App Functions: lets on-device agents (Gemini) discover and call the
     // functions in StarchartAppFunctionService. Android 16+ only.

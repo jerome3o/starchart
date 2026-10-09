@@ -51,10 +51,39 @@
         android:paddingBottom="6dp"
         android:textAppearance="?attr/textAppearanceBodyMedium" />
 
-    <org.maplibre.android.maps.MapView
-        android:id="@+id/map_view"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1">
+
+        <org.maplibre.android.maps.MapView
+            android:id="@+id/map_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Shown until photo access is granted. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_photos"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="16dp"
+            android:text="@string/map_show_photos"
+            android:visibility="gone" />
+
+        <!-- The day's photos, oldest first; tap to find on the map, tap again to open. -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/photo_strip"
+            android:layout_width="match_parent"
+            android:layout_height="96dp"
+            android:layout_gravity="bottom"
+            android:background="#99000000"
+            android:clipToPadding="false"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="8dp"
+            android:visibility="gone" />
+
+    </FrameLayout>
 
 </LinearLayout>
