@@ -27,12 +27,14 @@ class PhotoViewer(
     context: Context,
     private val photos: List<DayPhotos.Photo>,
     startIndex: Int,
+    private val placeholders: Map<Long, Bitmap>,
     private val onPage: (DayPhotos.Photo) -> Unit,
 ) : Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen) {
 
     private val main = Handler(Looper.getMainLooper())
     private val density = context.resources.displayMetrics.density
-    private val screenPx = minOf(2048, maxOf(context.resources.displayMetrics.widthPixels, context.resources.displayMetrics.heightPixels))
+    // Decode at the screen's long edge: as sharp as the display can show.
+    private val screenPx = minOf(3000, maxOf(context.resources.displayMetrics.widthPixels, context.resources.displayMetrics.heightPixels))
     // The current image and its neighbours; screen-sized bitmaps are large.
     private val cache = object : LruCache<Long, Bitmap>(3) {}
     private val caption = TextView(context)
@@ -107,11 +109,12 @@ class PhotoViewer(
             val p = photos[position]
             image.tag = p.id
             val cached = cache.get(p.id)
-            image.setImageBitmap(cached)
+            // The strip's small thumbnail shows instantly; the sharp decode replaces it.
+            image.setImageBitmap(cached ?: placeholders[p.id])
             if (cached != null) return
             val app = context.applicationContext
             Thread {
-                val bmp = DayPhotos.thumbnail(app, p.uri, screenPx) ?: return@Thread
+                val bmp = DayPhotos.fullImage(app, p.uri, screenPx) ?: return@Thread
                 main.post {
                     cache.put(p.id, bmp)
                     if (image.tag == p.id) image.setImageBitmap(bmp)

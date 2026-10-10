@@ -379,7 +379,7 @@ class MapFragment : Fragment() {
     /** First tap finds the photo on the map; a second tap opens the full-screen viewer. */
     private fun selectPhoto(p: DayPhotos.Photo, quiet: Boolean = false) {
         if (selectedPhoto == p.id) {
-            if (!quiet) PhotoViewer(requireContext(), photos, photos.indexOf(p)) { shown -> selectPhoto(shown, quiet = true) }.show()
+            if (!quiet) PhotoViewer(requireContext(), photos, photos.indexOf(p), thumbs) { shown -> selectPhoto(shown, quiet = true) }.show()
             return
         }
         val previous = photos.indexOfFirst { it.id == selectedPhoto }
