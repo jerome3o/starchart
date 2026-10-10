@@ -112,6 +112,29 @@ object DayPhotos {
         return best?.takeIf { abs(it.timeMs - timeMs) <= MAX_TRACK_GAP_MS }
     }
 
+    /**
+     * The real photo decoded at up to [maxPx] on its long edge (never upscaled),
+     * with EXIF rotation applied. MediaStore thumbnails top out at a few hundred
+     * pixels, so the full-screen viewer uses this instead.
+     */
+    fun fullImage(context: Context, uri: Uri, maxPx: Int): Bitmap? {
+        if (Build.VERSION.SDK_INT < 28) return thumbnail(context, uri, maxPx)
+        return try {
+            val source = android.graphics.ImageDecoder.createSource(context.contentResolver, uri)
+            android.graphics.ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                val w = info.size.width
+                val h = info.size.height
+                val long = maxOf(w, h)
+                if (long > maxPx) {
+                    val scale = maxPx.toDouble() / long
+                    decoder.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
+                }
+            }
+        } catch (_: Exception) {
+            thumbnail(context, uri, maxPx)
+        }
+    }
+
     /** Square thumbnail, or null if the image can't be read. */
     fun thumbnail(context: Context, uri: Uri, sizePx: Int): Bitmap? = try {
         if (Build.VERSION.SDK_INT >= 29) {
