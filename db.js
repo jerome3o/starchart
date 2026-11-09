@@ -673,7 +673,16 @@ function getDisplayById(id) {
 }
 
 // A device we've never seen asked to be set up; it waits for approval on the web page.
+// Anyone on the internet can announce a display, so unapproved ones are
+// capped: the oldest unclaimed entries make way for new ones.
+const MAX_PENDING_DISPLAYS = 20;
+
 function createPendingDisplay(mac, fwVersion) {
+  db.prepare(
+    `DELETE FROM displays WHERE id IN (
+       SELECT id FROM displays WHERE status = 'pending' AND email IS NULL
+       ORDER BY created_at DESC LIMIT -1 OFFSET ?)`
+  ).run(MAX_PENDING_DISPLAYS - 1);
   db.prepare(
     `INSERT OR IGNORE INTO displays (label, mac, friendly_id, status, created_at, fw_version)
      VALUES (?, ?, ?, 'pending', ?, ?)`

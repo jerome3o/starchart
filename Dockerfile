@@ -1,5 +1,6 @@
 # slim (glibc) rather than alpine so better-sqlite3 uses prebuilt binaries.
-FROM node:20-slim
+# Node 22 LTS (Node 20 stopped getting security fixes in April 2026).
+FROM node:22-slim
 
 WORKDIR /app
 

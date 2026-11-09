@@ -250,7 +250,7 @@ Already set up for you:
    `gh workflow run "Deploy to Fly.io" --repo jerome3o/starchart`.
 
 Then visit <https://starchart.fly.dev> and sign in. Only emails in `ALLOWED_EMAILS`
-(currently `jeromeswannack@gmail.com`) can log in.
+can log in; if it is empty, nobody can.
 
 ## How it works
 

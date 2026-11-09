@@ -1,0 +1,54 @@
+name: Security audit (encrypted)
+
+# On-demand: collects Fly status, secrets *names*, recent server logs and a
+# read-only summary of who has access (scripts/security-report.js), then
+# encrypts all of it to the RSA public key given as input before printing.
+# The repo is public, so the plain report never touches the Actions log; only
+# whoever holds the matching private key can read it.
+on:
+  workflow_dispatch:
+    inputs:
+      public_key:
+        description: "Base64 of an RSA public key (PEM) to encrypt the report to"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@98172f70657cb3e15db199af139be99bd3e61200 # master as of 2026-11-09
+        with:
+          version: 0.4.108
+
+      - name: Collect and encrypt
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          # Passed via env, never interpolated into the script.
+          PUBLIC_KEY_B64: ${{ inputs.public_key }}
+        run: |
+          set -euo pipefail
+          umask 077
+          r=$(mktemp -d)
+          {
+            echo "### status"; flyctl status --app starchart || true
+            echo "### machines"; flyctl machine list --app starchart || true
+            echo "### releases"; flyctl releases --app starchart || true
+            echo "### secrets (names and digests only)"; flyctl secrets list --app starchart || true
+            echo "### certs"; flyctl certs list --app starchart || true
+            echo "### ips"; flyctl ips list --app starchart || true
+            echo "### database report"
+            flyctl ssh console --app starchart -C "sh -c 'cd /app && DATA_DIR=/data node scripts/security-report.js'" || true
+            echo "### logs"; flyctl logs --app starchart --no-tail || true
+          } > "$r/report.txt" 2>&1
+          printf '%s' "$PUBLIC_KEY_B64" | base64 -d > "$r/pub.pem"
+          openssl rand -hex 32 > "$r/key"
+          gzip -9 "$r/report.txt"
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in "$r/report.txt.gz" -out "$r/report.enc" -pass file:"$r/key"
+          openssl pkeyutl -encrypt -pubin -inkey "$r/pub.pem" -pkeyopt rsa_padding_mode:oaep -in "$r/key" -out "$r/key.enc"
+          echo "----- KEY -----"; base64 -w0 "$r/key.enc"; echo
+          echo "----- REPORT -----"; base64 -w 1000 "$r/report.enc"
+          echo "----- END -----"
+          rm -rf "$r"
