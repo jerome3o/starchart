@@ -514,7 +514,32 @@ app.get('/', requireAuth, (req, res) => {
   );
 });
 
+// Last-resort error handler: malformed bodies (bad JSON, too large) get a short
+// 4xx and a one-line log instead of a stack trace per junk request.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+  if (status >= 500) console.error(err);
+  else console.log(`[http] ${status} ${err.type || 'error'} ${req.method} ${req.path}`);
+  if (res.headersSent) return;
+  res.status(status).json({ error: status >= 500 ? 'server error' : 'bad request' });
+});
+
+// Phone tokens idle for 30 days are revoked (the phone re-pairs); expired
+// revoked OAuth grants are dropped. At startup, then daily.
+const STALE_DEVICE_MS = 30 * 24 * 3600e3;
+function housekeeping() {
+  try {
+    const r = db.pruneStaleCredentials(STALE_DEVICE_MS);
+    if (r.devices || r.grants) console.log(`[housekeeping] revoked ${r.devices} idle device token(s), dropped ${r.grants} expired grant(s)`);
+  } catch (e) {
+    console.error('[housekeeping] failed:', e.message);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`starchart listening on :${PORT} (env=${NODE_ENV || 'development'})`);
+  housekeeping();
+  setInterval(housekeeping, 24 * 3600e3).unref();
   require('./nudges').start();
 });

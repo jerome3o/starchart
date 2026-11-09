@@ -248,6 +248,27 @@ function listDevices(email) {
     .all(email.toLowerCase());
 }
 
+/**
+ * Housekeeping: revoke phone tokens idle for `maxIdleMs` (a live phone syncs
+ * many times a day) and drop revoked OAuth grants whose refresh token has
+ * expired anyway. Returns what was removed.
+ */
+function pruneStaleCredentials(maxIdleMs, now = Date.now()) {
+  const cutoff = now - maxIdleMs;
+  const stale = db
+    .prepare(
+      `SELECT id FROM devices WHERE token_hash NOT LIKE 'revoked:%'
+         AND COALESCE(last_seen_at, created_at) < ?`
+    )
+    .all(cutoff);
+  const revoke = db.prepare('UPDATE devices SET token_hash = ? WHERE id = ?');
+  for (const d of stale) revoke.run(`revoked:${crypto.randomBytes(16).toString('hex')}`, d.id);
+  const grants = db
+    .prepare('DELETE FROM oauth_grants WHERE revoked = 1 AND COALESCE(refresh_expires_at, 0) < ?')
+    .run(now).changes;
+  return { devices: stale.length, grants };
+}
+
 function revokeDevice(email, deviceId) {
   // Fixes are intentionally kept: deleting a device only revokes its token.
   db.prepare('UPDATE devices SET token_hash = ? WHERE id = ? AND email = ?').run(
@@ -881,6 +902,7 @@ module.exports = {
   deviceForToken,
   listDevices,
   revokeDevice,
+  pruneStaleCredentials,
   setDeviceError,
   insertFixes,
   insertTrackingEvents,
