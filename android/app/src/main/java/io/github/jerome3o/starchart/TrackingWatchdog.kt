@@ -52,7 +52,7 @@ class TrackingWatchdog : BroadcastReceiver() {
             return
         }
 
-        val latest = LocationDb(context).latest()?.timeMs ?: 0L
+        val latest = LocationDb.get(context).latest()?.timeMs ?: 0L
         val ageMs = System.currentTimeMillis() - latest
         if (ageMs < STALE_MS) return
         TrackingLog.log(
@@ -78,7 +78,7 @@ class TrackingWatchdog : BroadcastReceiver() {
                 TrackingLog.log(context, "watchdog_no_fix", "no location returned")
                 return
             }
-            LocationDb(context).insert(
+            LocationDb.get(context).insert(
                 LocationDb.Fix(location.time, location.latitude, location.longitude, location.accuracy)
             )
             if (Sync.isLinked(context) && Sync.hasNetwork(context)) Sync.uploadPending(context)

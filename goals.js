@@ -162,7 +162,13 @@ router.get('/goals', (req, res) => {
   res.json(goalsWithProgress(req.device.email));
 });
 
+// A sane ceiling: every render, widget and nudge pass walks all goals.
+const MAX_ACTIVE_GOALS = 30;
+
 router.post('/goals', (req, res) => {
+  if (db.listGoals(req.device.email).length >= MAX_ACTIVE_GOALS) {
+    return res.status(400).json({ error: `at most ${MAX_ACTIVE_GOALS} active goals` });
+  }
   const { fields, errors } = validateGoalInput(req.body || {});
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
   const goal = db.createGoal(req.device.email, {
@@ -196,7 +202,9 @@ router.post('/goals/:id/completions', (req, res) => {
   const id = Number(req.params.id);
   const body = req.body || {};
   const atMs = body.time !== undefined ? Number(body.time) : undefined;
-  if (atMs !== undefined && !Number.isFinite(atMs)) return res.status(400).json({ error: 'time must be epoch ms' });
+  if (atMs !== undefined && !(Number.isFinite(atMs) && atMs >= Date.UTC(2015, 0, 1) && atMs <= Date.now() + 86400e3)) {
+    return res.status(400).json({ error: 'time must be a plausible epoch ms' });
+  }
   const result = logCompletion(req.device.email, id, {
     time: atMs, source: 'app', clientId: body.client_id ? String(body.client_id).slice(0, 64) : null,
     note: body.note ? String(body.note).slice(0, 200) : null,
@@ -222,6 +230,7 @@ router.get('/goals/:id/completions', (req, res) => {
 });
 
 module.exports = {
+  MAX_ACTIVE_GOALS,
   router,
   currentPeriod,
   goalsWithProgress,

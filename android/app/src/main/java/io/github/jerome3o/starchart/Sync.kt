@@ -3,11 +3,15 @@ package io.github.jerome3o.starchart
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
+import java.security.SecureRandom
 
 /**
  * Server pairing state and a tiny HTTP client for the sync API. The device
@@ -25,6 +29,13 @@ object Sync {
     private const val KEY_UPLOADED = "uploaded_count"
     private const val KEY_LAST_ERROR = "last_error"
     private const val KEY_LAST_EVENT_ID = "last_event_id"
+    private const val KEY_PAIR_VERIFIER = "pair_verifier"
+    private const val KEY_PAIR_VERIFIER_AT = "pair_verifier_at"
+
+    /** A pairing started longer ago than this is abandoned. */
+    private const val PAIR_VERIFIER_MAX_AGE_MS = 10 * 60_000L
+
+    private val TOKEN_PATTERN = Regex("^[0-9a-f]{64}$")
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -41,6 +52,83 @@ object Sync {
         // Keep last_synced_id: everything up to it is already on the server.
         prefs(context).edit().remove(KEY_TOKEN).apply()
     }
+
+    /**
+     * User-initiated unlink: asks the server (best effort, on a background
+     * thread) to revoke this device's token, and forgets it locally right away.
+     * The token is captured first, so the revoke still goes out after the
+     * local copy is gone; a failed revoke is ignored.
+     */
+    fun unlinkAndRevoke(context: Context) {
+        val token = token(context)
+        unlink(context)
+        if (token.isNullOrEmpty()) return
+        Thread {
+            try {
+                request("POST", "/api/device/unlink", token, JSONObject())
+            } catch (_: Exception) {}
+        }.start()
+    }
+
+    // --- Pairing (proof of possession) -----------------------------------------
+    //
+    // The browser only ever sees SHA-256(verifier) and a one-time code; the
+    // device token is handed out only to whoever can show the verifier, which
+    // never leaves this prefs file. A stray starchart://pair link therefore
+    // can't link this phone to someone else's account.
+
+    /**
+     * Starts pairing: stores a fresh random verifier and returns the URL of
+     * the server's confirm page, which carries only its SHA-256 challenge.
+     */
+    fun startPairing(context: Context, label: String): Uri {
+        val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val verifier = base64Url(bytes)
+        prefs(context).edit()
+            .putString(KEY_PAIR_VERIFIER, verifier)
+            .putLong(KEY_PAIR_VERIFIER_AT, System.currentTimeMillis())
+            // Written synchronously: the process may be killed while the browser is open.
+            .commit()
+        val challenge = base64Url(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)))
+        return Uri.parse("$SERVER_URL/pair/start").buildUpon()
+            .appendQueryParameter("challenge", challenge)
+            .appendQueryParameter("label", label)
+            .build()
+    }
+
+    /** The pending pairing's verifier, or null if none was started or it has expired. */
+    fun pendingVerifier(context: Context): String? {
+        val p = prefs(context)
+        val verifier = p.getString(KEY_PAIR_VERIFIER, null) ?: return null
+        val age = System.currentTimeMillis() - p.getLong(KEY_PAIR_VERIFIER_AT, 0L)
+        if (age !in 0..PAIR_VERIFIER_MAX_AGE_MS) {
+            clearVerifier(context)
+            return null
+        }
+        return verifier
+    }
+
+    fun clearVerifier(context: Context) {
+        prefs(context).edit().remove(KEY_PAIR_VERIFIER).remove(KEY_PAIR_VERIFIER_AT).apply()
+    }
+
+    /**
+     * Trades a one-time pairing [code] plus the stored [verifier] for a device
+     * token. Network call: run it off the main thread. Throws on any failure,
+     * leaving the current token untouched.
+     */
+    fun exchangePairCode(context: Context, code: String, verifier: String) {
+        val response = postUnauthenticated(
+            "/api/pair/exchange", JSONObject().put("code", code).put("verifier", verifier)
+        )
+        val token = response.optString("token")
+        if (!TOKEN_PATTERN.matches(token)) throw IOException("server returned a malformed token")
+        storeToken(context, token)
+        clearVerifier(context)
+    }
+
+    private fun base64Url(bytes: ByteArray): String =
+        Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
 
     fun lastSyncedId(context: Context): Long = prefs(context).getLong(KEY_LAST_SYNCED_ID, 0L)
 
@@ -86,7 +174,7 @@ object Sync {
      */
     fun uploadPending(context: Context): Outcome {
         val token = token(context) ?: return Outcome.OK
-        val db = LocationDb(context)
+        val db = LocationDb.get(context)
         return try {
             while (true) {
                 val batch = db.fixesAfter(lastSyncedId(context), BATCH_SIZE)
@@ -160,20 +248,24 @@ object Sync {
         return request(method, path, token, body, readTimeoutMs)
     }
 
-    private fun request(method: String, path: String, token: String, body: JSONObject?, readTimeoutMs: Int = 30_000): JSONObject {
+    /** JSON POST with no Authorization header (pairing only); throws on non-2xx. */
+    private fun postUnauthenticated(path: String, body: JSONObject): JSONObject =
+        request("POST", path, null, body)
+
+    private fun request(method: String, path: String, token: String?, body: JSONObject?, readTimeoutMs: Int = 30_000): JSONObject {
         val connection = URL(SERVER_URL + path).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method
             connection.connectTimeout = 15_000
             connection.readTimeout = readTimeoutMs
-            connection.setRequestProperty("Authorization", "Bearer $token")
+            if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
             if (body != null) {
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.doOutput = true
                 connection.outputStream.use { it.write(body.toString().toByteArray()) }
             }
             val code = connection.responseCode
-            if (code == 401) throw UnauthorizedException()
+            if (code == 401 && token != null) throw UnauthorizedException()
             if (code !in 200..299) {
                 val detail = try {
                     connection.errorStream?.use { it.readBytes().decodeToString() }?.take(200)

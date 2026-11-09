@@ -36,7 +36,10 @@ function tzOffsetMs(atMs, timeZone) {
 // UTC ms of local midnight for a calendar date (y, m, d) in a timezone.
 function localMidnightUtc(year, month, day, timeZone) {
   const guess = Date.UTC(year, month - 1, day);
-  return guess - tzOffsetMs(guess, timeZone);
+  // Refine once with the offset at the first estimate, so a DST change that
+  // night (e.g. Sydney's first Sunday of October) doesn't shift it an hour.
+  const first = guess - tzOffsetMs(guess, timeZone);
+  return guess - tzOffsetMs(first, timeZone);
 }
 
 function parseYmd(dateStr) {

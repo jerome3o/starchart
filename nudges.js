@@ -79,7 +79,7 @@ async function runForUser(email, log = console.log) {
 
   // Most behind first; the first one the classifier approves gets the nudge.
   list.sort((a, b) => b.context.behind_by - a.context.behind_by);
-  for (const c of list) {
+  for (const c of list.slice(0, 5)) { // at most 5 classifier calls per user per hour
     const decision = await claude.shouldNudge(c.context);
     // Logs stay content-free: Fly logs can be printed by a public Actions workflow.
     log(`[nudges] goal ${c.goal.id}: ${decision.send ? 'send' : 'skip'}`);

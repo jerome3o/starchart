@@ -8,8 +8,24 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
-class LocationDb(context: Context) :
+/**
+ * The phone's location history and tracking diagnostics. One helper is shared
+ * by the whole process (see [get]); SQLiteOpenHelper is thread-safe and keeps
+ * a single connection, so it is never closed.
+ */
+class LocationDb private constructor(context: Context) :
     SQLiteOpenHelper(context.applicationContext, "locations.db", null, 2) {
+
+    companion object {
+        @Volatile
+        private var instance: LocationDb? = null
+
+        /** The process-wide database; never call close() on it. */
+        fun get(context: Context): LocationDb =
+            instance ?: synchronized(this) {
+                instance ?: LocationDb(context.applicationContext).also { instance = it }
+            }
+    }
 
     data class Fix(val timeMs: Long, val lat: Double, val lon: Double, val accuracyM: Float)
 

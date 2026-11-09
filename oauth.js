@@ -10,6 +10,13 @@ const crypto = require('crypto');
 const express = require('express');
 const db = require('./db');
 const createLimiter = require('./ratelimit');
+const { isAllowed } = require('./config');
+
+// Dynamic registration is open to anyone, so only redirect hosts of known MCP
+// clients are accepted; otherwise a lookalike app named "Claude" could collect
+// authorization codes on its own site. Extend via OAUTH_REDIRECT_HOSTS.
+const REDIRECT_HOSTS = (process.env.OAUTH_REDIRECT_HOSTS || 'claude.ai,claude.com')
+  .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
 
 const SCOPES = {
   'location:read': 'Read your location history',
@@ -78,7 +85,8 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
     const valid = uris.length > 0 && uris.length <= 10 && uris.every((u) => {
       try {
         const url = new URL(u);
-        return url.protocol === 'https:' && !url.hash;
+        return url.protocol === 'https:' && !url.hash && !url.username && !url.password && !url.port &&
+          REDIRECT_HOSTS.includes(url.hostname.toLowerCase());
       } catch (_) {
         return false;
       }
@@ -86,7 +94,7 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
     if (!valid) {
       return res.status(400).json({
         error: 'invalid_redirect_uri',
-        error_description: 'redirect_uris must be 1-10 https URLs',
+        error_description: `redirect_uris must be 1-10 https URLs on: ${REDIRECT_HOSTS.join(', ')}`,
       });
     }
     if (body.token_endpoint_auth_method && body.token_endpoint_auth_method !== 'none') {
@@ -111,7 +119,9 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
     const q = req.query;
     const client = q.client_id ? db.getOAuthClient(String(q.client_id)) : null;
     const redirectUri = String(q.redirect_uri || '');
-    if (!client || !client.redirect_uris.includes(redirectUri)) {
+    let redirectHost = '';
+    try { redirectHost = new URL(redirectUri).hostname.toLowerCase(); } catch (_) {}
+    if (!client || !client.redirect_uris.includes(redirectUri) || !REDIRECT_HOSTS.includes(redirectHost)) {
       // Never redirect to an unregistered URI: show the error instead.
       return res.status(400).send(page('Invalid request', `<h1>🚫 Invalid OAuth request</h1>
         <p>Unknown client or unregistered redirect URI.</p>`));
@@ -149,7 +159,8 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
     res.send(page('Connect — Starchart', `
       <h1>🔗 Connect ${escapeHtml(client.client_name)}</h1>
       <p><strong>${escapeHtml(client.client_name)}</strong> wants access to your Starchart data as
-      <strong>${escapeHtml(req.session.user.email)}</strong>:</p>
+      <strong>${escapeHtml(req.session.user.email)}</strong>. You'll be sent back to
+      <strong>${escapeHtml(redirectHost)}</strong>:</p>
       <form method="POST" action="/oauth/authorize/decision" style="display:inline">
         <ul style="text-align:left;padding:0">${scopeList}</ul>
         <input type="hidden" name="csrf" value="${csrf}" />
@@ -256,12 +267,13 @@ function createOAuthRouter({ issuer, requireAuth, page }) {
         return res.status(401).json({ error: 'invalid_token' });
       };
       if (limiter.blocked(req.ip)) return res.status(429).json({ error: 'too_many_requests' });
-      const header = req.get('authorization') || '';
-      const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+      const match = /^bearer\s+(\S+)$/i.exec(req.get('authorization') || '');
+      const token = match ? match[1] : '';
       const grant = !token ? null
         : token.startsWith('sc_') ? db.apiTokenGrant(token)
         : db.grantForAccessToken(token);
-      if (!grant) {
+      // Accounts removed from the allow-list lose their tokens' access too.
+      if (!grant || !isAllowed(grant.email)) {
         limiter.fail(req.ip);
         return challenge();
       }

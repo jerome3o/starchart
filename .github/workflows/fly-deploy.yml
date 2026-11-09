@@ -10,10 +10,11 @@ on:
       - "README.md"
   workflow_dispatch:
 
-# Never run two deploys at once; cancel an in-progress one if a newer push lands.
+# Never run two deploys at once; a newer push waits for the running one
+# (cancelling mid-way could leave secrets staged but not deployed).
 concurrency:
   group: fly-deploy
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 # Deploys only need to read the code; secrets come from Actions secrets.
 permissions:

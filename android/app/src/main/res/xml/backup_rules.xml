@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Keep the device token out of Android cloud backups. -->
+<!--
+  Keep the device token, the location history and the chat transcript out of
+  Android cloud backups: none of it should leave the phone that way.
+-->
 <full-backup-content>
     <exclude domain="sharedpref" path="sync.xml" />
+    <exclude domain="sharedpref" path="starchart.xml" />
+    <exclude domain="database" path="locations.db" />
+    <exclude domain="database" path="locations.db-journal" />
+    <exclude domain="database" path="locations.db-wal" />
+    <exclude domain="database" path="locations.db-shm" />
 </full-backup-content>

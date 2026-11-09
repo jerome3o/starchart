@@ -28,12 +28,16 @@ import com.google.android.material.materialswitch.MaterialSwitch
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** Everything that isn't a core feature: permissions, tracking, sync, tests. */
 class SettingsFragment : Fragment() {
 
     private lateinit var db: LocationDb
+
+    // Database reads and the CSV export run here, one at a time, off the main thread.
+    private val io = Executors.newSingleThreadExecutor()
 
     // Set when the location permission request came from the tracking switch,
     // so a grant from the permissions panel doesn't silently start tracking.
@@ -70,7 +74,7 @@ class SettingsFragment : Fragment() {
     ): View = inflater.inflate(R.layout.fragment_settings, container, false)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        db = LocationDb(requireContext())
+        db = LocationDb.get(requireContext())
         setUpMapStyle(view)
         setUpPermissions(view)
         setUpLocationTracking(view)
@@ -250,36 +254,66 @@ class SettingsFragment : Fragment() {
 
     private fun updateLocationStatus() {
         val status = view?.findViewById<TextView>(R.id.location_status) ?: return
-        val latest = db.latest()
-        status.text = if (latest == null) {
-            getString(R.string.location_status_empty)
-        } else {
-            getString(
-                R.string.location_status,
-                db.count(),
-                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(latest.timeMs)),
-                latest.accuracyM.toInt()
-            )
+        io.execute {
+            val latest = db.latest()
+            val count = if (latest == null) 0L else db.count()
+            status.post {
+                if (!isAdded) return@post
+                status.text = if (latest == null) {
+                    getString(R.string.location_status_empty)
+                } else {
+                    getString(
+                        R.string.location_status,
+                        count,
+                        DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(latest.timeMs)),
+                        latest.accuracyM.toInt()
+                    )
+                }
+            }
         }
     }
 
     private fun exportLocations() {
-        val context = requireContext()
-        if (db.count() == 0L) {
-            toast(R.string.export_empty)
-            return
+        val view = view ?: return
+        val app = requireContext().applicationContext
+        val button = view.findViewById<Button>(R.id.btn_export_locations)
+        button.isEnabled = false
+        io.execute {
+            // null: nothing to export; otherwise the file's shareable URI.
+            val uri = try {
+                if (db.count() == 0L) null else {
+                    val dir = File(app.cacheDir, "exports").apply { mkdirs() }
+                    val file = File(dir, "starchart-locations.csv")
+                    file.bufferedWriter().use { db.writeCsv(it) }
+                    FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+                }
+            } catch (e: Exception) {
+                button.post {
+                    button.isEnabled = true
+                    if (isAdded) Toast.makeText(app, e.message ?: e.javaClass.simpleName, Toast.LENGTH_LONG).show()
+                }
+                return@execute
+            }
+            button.post {
+                button.isEnabled = true
+                if (!isAdded) return@post
+                if (uri == null) {
+                    toast(R.string.export_empty)
+                    return@post
+                }
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/csv"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(send, getString(R.string.export_chooser_title)))
+            }
         }
-        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-        val file = File(dir, "starchart-locations.csv")
-        file.bufferedWriter().use { db.writeCsv(it) }
+    }
 
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "text/csv"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        startActivity(Intent.createChooser(send, getString(R.string.export_chooser_title)))
+    override fun onDestroy() {
+        io.shutdown()
+        super.onDestroy()
     }
 
     // --- Server sync ---------------------------------------------------------
@@ -288,15 +322,14 @@ class SettingsFragment : Fragment() {
         val context = requireContext()
         view.findViewById<Button>(R.id.btn_link_server).setOnClickListener {
             if (Sync.isLinked(context)) {
-                Sync.unlink(context)
+                // Revokes the token on the server too (best effort, in the background).
+                Sync.unlinkAndRevoke(context)
                 SyncWorker.cancelPeriodic(context)
                 toast(R.string.sync_unlinked_toast)
                 updateSyncStatus()
             } else {
-                val label = Uri.encode(Build.MODEL ?: "Android device")
-                startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse("${Sync.SERVER_URL}/pair/start?label=$label"))
-                )
+                val url = Sync.startPairing(context, Build.MODEL ?: "Android device")
+                startActivity(Intent(Intent.ACTION_VIEW, url))
             }
         }
 
