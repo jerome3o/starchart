@@ -26,19 +26,62 @@ const allowedEmails = ALLOWED_EMAILS.split(',')
   .map((s) => s.trim().toLowerCase())
   .filter(Boolean);
 
+// Fail closed: without a real session secret anyone who has read this public
+// code could forge a login cookie, so production refuses to start.
+if (isProd && (!SESSION_SECRET || SESSION_SECRET.length < 16)) {
+  console.error('SESSION_SECRET is missing or too short; refusing to start.');
+  process.exit(1);
+}
+const sessionSecret = SESSION_SECRET || 'dev-insecure-secret-change-me';
+if (!allowedEmails.length) {
+  console.error('ALLOWED_EMAILS is empty: every sign-in will be refused.');
+}
+
 // Fly terminates TLS at its edge proxy; trust it so req.protocol is https.
 app.set('trust proxy', 1);
 
 app.use(
   cookieSession({
     name: 'sess',
-    keys: [SESSION_SECRET || 'dev-insecure-secret-change-me'],
+    keys: [sessionSecret],
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     httpOnly: true,
     sameSite: 'lax',
     secure: isProd,
   })
 );
+
+// Browser hardening for every response: no framing (clickjacking on the
+// consent and token pages), no MIME sniffing, no referrers (OAuth codes live
+// in URLs), HTTPS only.
+app.use((req, res, next) => {
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Content-Security-Policy', "frame-ancestors 'none'; base-uri 'none'; form-action 'self' https:; object-src 'none'");
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'no-referrer');
+  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (isProd) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
+
+// Cross-site request forgery backstop for the signed-in web pages: a POST that
+// says it came from another site is refused. (The session cookie is also
+// SameSite=Lax.) Device, MCP and OAuth-client endpoints use bearer tokens and
+// are exempt.
+const tokenAuthedPaths = /^\/(api\/|mcp$|oauth\/token$|oauth\/register$)/;
+app.use((req, res, next) => {
+  if (req.method !== 'POST' || tokenAuthedPaths.test(req.path)) return next();
+  const source = req.get('origin') || req.get('referer');
+  if (!source) return next();
+  let origin;
+  try {
+    origin = new URL(source).origin;
+  } catch (_) {
+    return res.status(403).send('Bad origin');
+  }
+  if (origin !== new URL(baseUrl(req)).origin) return res.status(403).send('Cross-site request refused');
+  next();
+});
 
 function baseUrl(req) {
   return (BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
@@ -170,10 +213,12 @@ app.get('/auth/google/callback', async (req, res) => {
     if (!profile.email_verified) {
       return res.status(403).send('Your Google email is not verified.');
     }
-    if (allowedEmails.length && !allowedEmails.includes(email)) {
+    // An empty allow-list lets nobody in.
+    if (!allowedEmails.includes(email)) {
+      const safe = email.replace(/[<>&"']/g, '');
       return res
         .status(403)
-        .send(page('Access denied', `<h1>🚫 Access denied</h1><p>${email} is not on the allow-list.</p><a class="btn" href="/logout">Try another account</a>`));
+        .send(page('Access denied', `<h1>🚫 Access denied</h1><p>${safe} is not on the allow-list.</p><a class="btn" href="/logout">Try another account</a>`));
     }
 
     req.session.user = {
@@ -183,7 +228,8 @@ app.get('/auth/google/callback', async (req, res) => {
     };
     const returnTo = req.session.returnTo;
     req.session.returnTo = undefined;
-    res.redirect(returnTo && returnTo.startsWith('/') ? returnTo : '/');
+    // Only same-site paths: "//host" and "/\\host" would leave the site.
+    res.redirect(returnTo && /^\/(?![\/\\])/.test(returnTo) ? returnTo : '/');
   } catch (err) {
     console.error('OAuth callback error:', err);
     res.status(500).send('Authentication failed. Please try again.');
@@ -232,7 +278,7 @@ const issuer = (BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 // The TRMNL protocol fixes the device paths under /api, so its router goes
 // before the bearer-guarded phone API.
 app.use(createDisplayRouter({
-  issuer, secret: SESSION_SECRET || 'dev-insecure-secret-change-me', requireAuth, page,
+  issuer, secret: sessionSecret, requireAuth, page,
 }));
 
 app.use('/api', api);

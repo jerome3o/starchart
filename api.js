@@ -100,9 +100,17 @@ router.post('/commands/:id/result', (req, res) => {
   res.json({ updated });
 });
 
-// In-app chat with Claude (all MCP tools, as this device's user).
+// In-app chat with Claude (all MCP tools, as this device's user). Capped per
+// device so a leaked device token can't run up the Claude bill.
+const CHAT_PER_HOUR = 60;
+const chatUse = new Map();
 router.post('/chat', async (req, res) => {
   if (!claude.enabled()) return res.status(503).json({ error: 'chat is not configured (no ANTHROPIC_API_KEY on the server)' });
+  const now = Date.now();
+  const recent = (chatUse.get(req.device.id) || []).filter((t) => now - t < 3600e3);
+  if (recent.length >= CHAT_PER_HOUR) return res.status(429).json({ error: 'chat limit reached; try again in a while' });
+  recent.push(now);
+  chatUse.set(req.device.id, recent);
   const history = Array.isArray(req.body && req.body.messages) ? req.body.messages : null;
   const valid = history && history.length > 0 && history.length <= 200 && history.every((m) =>
     m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.length <= 20000)

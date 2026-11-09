@@ -15,16 +15,20 @@ concurrency:
   group: fly-deploy
   cancel-in-progress: true
 
+# Deploys only need to read the code; secrets come from Actions secrets.
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Pinned: resolving "latest" needs an unauthenticated GitHub API call
       # that gets rate-limited on shared runners and fails the whole deploy.
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: superfly/flyctl-actions/setup-flyctl@98172f70657cb3e15db199af139be99bd3e61200 # master as of 2026-11-09
         with:
           version: 0.4.108
 
