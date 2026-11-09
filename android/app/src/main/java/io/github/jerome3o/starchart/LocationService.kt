@@ -21,6 +21,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * Foreground service that records a location fix roughly every minute into
@@ -36,30 +37,37 @@ class LocationService : Service() {
 
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
-            for (location in result.locations) {
-                db.insert(
-                    LocationDb.Fix(
-                        timeMs = location.time,
-                        lat = location.latitude,
-                        lon = location.longitude,
-                        accuracyM = location.accuracy,
-                    )
+            // Delivered on the main looper: hand the SQLite writes to the worker.
+            val fixes = result.locations.map { location ->
+                LocationDb.Fix(
+                    timeMs = location.time,
+                    lat = location.latitude,
+                    lon = location.longitude,
+                    accuracyM = location.accuracy,
                 )
             }
-            pushToServer()
+            try {
+                uploader.execute {
+                    fixes.forEach { db.insert(it) }
+                    pushToServer()
+                }
+            } catch (_: RejectedExecutionException) {
+                // The service is shutting down; still keep the fixes.
+                fixes.forEach { db.insert(it) }
+            }
         }
     }
 
-    // Uploads run one at a time on this thread; failures are left for the
-    // hourly SyncWorker catch-up.
+    // Inserts and uploads run one at a time on this thread, so a fix is
+    // always stored before the upload that should include it; upload
+    // failures are left for the hourly SyncWorker catch-up.
     private val uploader = Executors.newSingleThreadExecutor()
 
+    /** Runs on [uploader]. */
     private fun pushToServer() {
         if (!Sync.isLinked(this) || !Sync.hasNetwork(this)) return
-        uploader.execute {
-            Sync.uploadPending(this)
-            if (Sync.commandsWaiting) PhoneCommands.poll(this)
-        }
+        Sync.uploadPending(this)
+        if (Sync.commandsWaiting) PhoneCommands.poll(this)
     }
 
     private val powerReceiver = object : BroadcastReceiver() {
@@ -79,7 +87,7 @@ class LocationService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        db = LocationDb(this)
+        db = LocationDb.get(this)
         fused = LocationServices.getFusedLocationProviderClient(this)
         TrackingLog.recordProcessExits(this)
         registerReceiver(powerReceiver, IntentFilter().apply {

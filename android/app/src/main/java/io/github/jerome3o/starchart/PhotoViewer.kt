@@ -18,6 +18,8 @@ import androidx.recyclerview.widget.RecyclerView
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * Full-screen, swipeable viewer for a day's photos. Swiping reports the photo
@@ -35,8 +37,14 @@ class PhotoViewer(
     private val density = context.resources.displayMetrics.density
     // Decode at the screen's long edge: as sharp as the display can show.
     private val screenPx = minOf(3000, maxOf(context.resources.displayMetrics.widthPixels, context.resources.displayMetrics.heightPixels))
-    // The current image and its neighbours; screen-sized bitmaps are large.
-    private val cache = object : LruCache<Long, Bitmap>(3) {}
+    // Recently shown images, bounded by bytes: screen-sized bitmaps are large.
+    private val cache = object : LruCache<Long, Bitmap>(
+        minOf(MAX_CACHE_BYTES, (Runtime.getRuntime().maxMemory() / 8).toInt())
+    ) {
+        override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
+    }
+    // One decode at a time, so a fast swipe can't stack up full-size bitmaps.
+    private val decoder = Executors.newSingleThreadExecutor()
     private val caption = TextView(context)
     private var current = -1
 
@@ -113,13 +121,29 @@ class PhotoViewer(
             image.setImageBitmap(cached ?: placeholders[p.id])
             if (cached != null) return
             val app = context.applicationContext
-            Thread {
-                val bmp = DayPhotos.fullImage(app, p.uri, screenPx) ?: return@Thread
-                main.post {
-                    cache.put(p.id, bmp)
-                    if (image.tag == p.id) image.setImageBitmap(bmp)
+            try {
+                decoder.execute {
+                    // Skip pages scrolled away (and rebound) while this waited its turn.
+                    if (image.tag != p.id || cache.get(p.id) != null) return@execute
+                    val bmp = DayPhotos.fullImage(app, p.uri, screenPx) ?: return@execute
+                    main.post {
+                        cache.put(p.id, bmp)
+                        if (image.tag == p.id) image.setImageBitmap(bmp)
+                    }
                 }
-            }.start()
+            } catch (_: RejectedExecutionException) {
+                // Viewer closed; the placeholder stays.
+            }
         }
+    }
+
+    override fun onStop() {
+        decoder.shutdownNow()
+        cache.evictAll()
+        super.onStop()
+    }
+
+    private companion object {
+        const val MAX_CACHE_BYTES = 64 * 1024 * 1024
     }
 }

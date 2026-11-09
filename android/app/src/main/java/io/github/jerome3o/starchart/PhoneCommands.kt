@@ -74,7 +74,7 @@ object PhoneCommands {
     }
 
     private fun diagnostics(context: Context): JSONObject {
-        val db = LocationDb(context)
+        val db = LocationDb.get(context)
         val now = System.currentTimeMillis()
         val latest = db.latest()
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -148,7 +148,7 @@ object PhoneCommands {
             LocationServices.getFusedLocationProviderClient(context).getCurrentLocation(request, null),
             35, TimeUnit.SECONDS
         ) ?: return JSONObject().put("fix", JSONObject.NULL).put("note", "no location available")
-        LocationDb(context).insert(LocationDb.Fix(location.time, location.latitude, location.longitude, location.accuracy))
+        LocationDb.get(context).insert(LocationDb.Fix(location.time, location.latitude, location.longitude, location.accuracy))
         Sync.uploadPending(context)
         return JSONObject().put("fix", JSONObject()
             .put("time", iso(location.time)).put("lat", location.latitude).put("lon", location.longitude)
@@ -171,10 +171,12 @@ object PhoneCommands {
             context, 7, target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val text = args.optString("text")
+        // Capped here too, whatever the server allows.
+        val title = args.optString("title", "Starchart").take(MAX_NOTIFY_TITLE)
+        val text = args.optString("text").take(MAX_NOTIFY_TEXT)
         val notification = NotificationCompat.Builder(context, Notifications.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_star_notification)
-            .setContentTitle(args.optString("title", "Starchart"))
+            .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
@@ -189,6 +191,8 @@ object PhoneCommands {
     }
 
     private const val NOTIFY_ID = 4242
+    private const val MAX_NOTIFY_TITLE = 80
+    private const val MAX_NOTIFY_TEXT = 400
 
     private fun iso(ms: Long) = java.time.Instant.ofEpochMilli(ms).toString()
 }

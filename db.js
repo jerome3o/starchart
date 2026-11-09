@@ -190,6 +190,9 @@ const displayColumns = db.prepare('PRAGMA table_info(displays)').all().map((c) =
 if (!displayColumns.includes('presented_key_hash')) {
   db.exec('ALTER TABLE displays ADD COLUMN presented_key_hash TEXT');
 }
+if (!displayColumns.includes('pending_key_at')) {
+  db.exec('ALTER TABLE displays ADD COLUMN pending_key_at INTEGER');
+}
 
 const goalColumns = db.prepare('PRAGMA table_info(goals)').all().map((c) => c.name);
 if (!goalColumns.includes('description')) {
@@ -353,11 +356,21 @@ const takePhoneCommands = db.transaction((deviceId) => {
   return rows.map((r) => ({ id: r.id, command: r.command, args: JSON.parse(r.args || '{}') }));
 });
 
+// Cut-off JSON can't be parsed back, so oversized results are wrapped instead.
+function boundedJson(value) {
+  const text = JSON.stringify(value);
+  return text.length <= 200000 ? text : JSON.stringify({ truncated: true, preview: text.slice(0, 190000) });
+}
+
+function recentCommandCount(deviceId, sinceMs) {
+  return db.prepare('SELECT COUNT(*) AS c FROM phone_commands WHERE device_id = ? AND created_at >= ?').get(deviceId, sinceMs).c;
+}
+
 function completePhoneCommand(deviceId, id, ok, result) {
   return db.prepare(
     `UPDATE phone_commands SET status = ?, completed_at = ?, result = ?
      WHERE id = ? AND device_id = ? AND status IN ('pending', 'delivered')`
-  ).run(ok ? 'done' : 'failed', Date.now(), JSON.stringify(result ?? null).slice(0, 200000), id, deviceId).changes;
+  ).run(ok ? 'done' : 'failed', Date.now(), boundedJson(result ?? null), id, deviceId).changes;
 }
 
 function getPhoneCommand(email, id) {
@@ -415,7 +428,7 @@ function fixesBetween(email, fromMs, toMs, deviceId = null) {
        FROM fixes f JOIN devices d ON d.id = f.device_id
        WHERE d.email = ? AND f.time >= ? AND f.time < ?
          AND (? IS NULL OR f.device_id = ?)
-       ORDER BY f.time ASC`
+       ORDER BY f.time ASC LIMIT 200000`
     )
     .all(email.toLowerCase(), fromMs, toMs, deviceId, deviceId);
 }
@@ -499,14 +512,18 @@ function grantForAccessToken(token) {
 }
 
 // Rotates: the old grant is revoked and a fresh access/refresh pair issued.
+// Presenting an already-rotated refresh token means two parties hold it (the
+// real client and a thief), so every grant of that client for that account is
+// revoked and both have to sign in again (OAuth 2.1 reuse detection).
 const rotateRefreshToken = db.transaction((refreshToken, clientId) => {
   const grant = db
-    .prepare(
-      `SELECT * FROM oauth_grants WHERE refresh_hash = ? AND client_id = ? AND revoked = 0
-       AND refresh_expires_at > ?`
-    )
+    .prepare('SELECT * FROM oauth_grants WHERE refresh_hash = ? AND client_id = ? AND refresh_expires_at > ?')
     .get(hashToken(refreshToken), clientId, Date.now());
   if (!grant) return null;
+  if (grant.revoked) {
+    db.prepare('UPDATE oauth_grants SET revoked = 1 WHERE email = ? AND client_id = ?').run(grant.email, clientId);
+    return null;
+  }
   db.prepare('UPDATE oauth_grants SET revoked = 1 WHERE id = ?').run(grant.id);
   return { ...issueTokens({ clientId, email: grant.email, scope: grant.scope }), scope: grant.scope };
 });
@@ -526,6 +543,8 @@ function listGrants(email) {
 function revokeClientGrants(email, clientId) {
   db.prepare('UPDATE oauth_grants SET revoked = 1 WHERE email = ? AND client_id = ?')
     .run(email.toLowerCase(), clientId);
+  // Unused codes would otherwise still be exchangeable after revoking.
+  db.prepare('DELETE FROM oauth_codes WHERE email = ? AND client_id = ?').run(email.toLowerCase(), clientId);
 }
 
 function purgeExpiredOAuth() {
@@ -681,7 +700,7 @@ function createPendingDisplay(mac, fwVersion) {
   db.prepare(
     `DELETE FROM displays WHERE id IN (
        SELECT id FROM displays WHERE status = 'pending' AND email IS NULL
-       ORDER BY created_at DESC LIMIT -1 OFFSET ?)`
+       ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?)`
   ).run(MAX_PENDING_DISPLAYS - 1);
   db.prepare(
     `INSERT OR IGNORE INTO displays (label, mac, friendly_id, status, created_at, fw_version)
@@ -722,15 +741,18 @@ function approveDisplay(email, { id, label }) {
     const current = db.prepare('SELECT * FROM displays WHERE id = ?').get(id);
     if (!current || !current.mac || !['pending', 'active'].includes(current.status)) return null;
     if (current.email && current.email !== email.toLowerCase()) return null;
-    const adopt = Boolean(current.presented_key_hash);
+    // Keys a device merely presents are never adopted any more: anyone who
+    // knows a MAC could present one. Approval always parks a fresh key.
+    const adopt = false;
     db.prepare(
       `UPDATE displays SET email = ?, status = 'active', setup_requested_at = NULL,
          label = COALESCE(?, label),
          key_hash = CASE WHEN ? THEN presented_key_hash ELSE key_hash END,
          pending_key = CASE WHEN ? THEN NULL ELSE ? END,
+         pending_key_at = ?,
          presented_key_hash = NULL
        WHERE id = ?`
-    ).run(email.toLowerCase(), label || null, adopt ? 1 : 0, adopt ? 1 : 0, key, id);
+    ).run(email.toLowerCase(), label || null, adopt ? 1 : 0, adopt ? 1 : 0, key, Date.now(), id);
     return { key: null, adopted: adopt, display: db.prepare('SELECT * FROM displays WHERE id = ?').get(id) };
   }
   const info = db
@@ -742,11 +764,18 @@ function approveDisplay(email, { id, label }) {
   return { key, display: db.prepare('SELECT * FROM displays WHERE id = ?').get(info.lastInsertRowid) };
 }
 
-// The device's /api/setup call collects its approved key (once).
+// The device's /api/setup call collects its approved key (once), and only
+// within 10 minutes of the approval click, so a parked key can't be picked up
+// later by someone spoofing the MAC.
+const PENDING_KEY_TTL_MS = 10 * 60 * 1000;
 const claimPendingKey = db.transaction((mac) => {
-  const row = db.prepare("SELECT id, pending_key FROM displays WHERE mac = ? AND status = 'active'").get(mac);
+  const row = db.prepare("SELECT id, pending_key, pending_key_at FROM displays WHERE mac = ? AND status = 'active'").get(mac);
   if (!row || !row.pending_key) return null;
-  db.prepare('UPDATE displays SET key_hash = ?, pending_key = NULL WHERE id = ?')
+  if (!row.pending_key_at || Date.now() - row.pending_key_at > PENDING_KEY_TTL_MS) {
+    db.prepare('UPDATE displays SET pending_key = NULL, pending_key_at = NULL WHERE id = ?').run(row.id);
+    return null;
+  }
+  db.prepare('UPDATE displays SET key_hash = ?, pending_key = NULL, pending_key_at = NULL WHERE id = ?')
     .run(hashToken(row.pending_key), row.id);
   return row.pending_key;
 });
@@ -760,6 +789,9 @@ function listDisplays(email) {
 }
 
 function revokeDisplay(email, id) {
+  // Rejecting an unclaimed pending entry deletes it, so a spoofed request
+  // can't permanently block the real device with that MAC.
+  db.prepare("DELETE FROM displays WHERE id = ? AND status = 'pending' AND email IS NULL").run(id);
   db.prepare(
     `UPDATE displays SET status = 'revoked', key_hash = ? WHERE id = ? AND (email = ? OR status = 'pending')`
   ).run(`revoked:${crypto.randomBytes(8).toString('hex')}`, id, email.toLowerCase());
@@ -772,11 +804,13 @@ function updateDisplaySettings(email, id, { label, refreshRate }) {
   ).run(label || null, refreshRate || null, email.toLowerCase(), id);
 }
 
+const finiteOrNull = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+
 function touchDisplay(id, { batteryVoltage, fwVersion, rssi }) {
   db.prepare(
     `UPDATE displays SET last_seen_at = ?, battery_voltage = COALESCE(?, battery_voltage),
        fw_version = COALESCE(?, fw_version), rssi = COALESCE(?, rssi) WHERE id = ?`
-  ).run(Date.now(), batteryVoltage ?? null, fwVersion || null, rssi ?? null, id);
+  ).run(Date.now(), finiteOrNull(batteryVoltage), fwVersion ? String(fwVersion).slice(0, 20) : null, finiteOrNull(rssi), id);
 }
 
 // --- Personal API tokens (for MCP clients that can't do OAuth, e.g. Gemini) --
@@ -857,6 +891,7 @@ module.exports = {
   recentCompletionTimes,
   queuePhoneCommand,
   pendingCommandCount,
+  recentCommandCount,
   takePhoneCommands,
   completePhoneCommand,
   getPhoneCommand,

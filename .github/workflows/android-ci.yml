@@ -13,8 +13,9 @@ on:
         required: false
         default: ""
 
+# Read-only by default; only the release job (which publishes) gets write.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -22,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
@@ -38,9 +41,12 @@ jobs:
         with:
           name: starchart-apk
           path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 7
 
   release:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version != '' }}
+    permissions:
+      contents: write
     uses: ./.github/workflows/android-release.yml
     with:
       version: ${{ inputs.release_version }}

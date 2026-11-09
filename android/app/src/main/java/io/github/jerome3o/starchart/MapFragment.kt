@@ -45,6 +45,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.util.concurrent.Executors
 
 /**
  * Day-by-day explorer of the phone's own location history, drawn with
@@ -74,6 +75,12 @@ class MapFragment : Fragment() {
     private var photoLoad = 0
     private var photoStrip: RecyclerView? = null
 
+    // Database queries run here, off the main thread; [dayLoad] discards a
+    // day's result when another day was asked for in the meantime.
+    private val io = Executors.newSingleThreadExecutor()
+    private var dayLoad = 0
+    private var dayFixes: List<LocationDb.StoredFix> = emptyList()
+
     private val requestPhotos =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { show(day) }
 
@@ -85,7 +92,7 @@ class MapFragment : Fragment() {
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        db = LocationDb(requireContext())
+        db = LocationDb.get(requireContext())
         mapView = view.findViewById<MapView>(R.id.map_view).also { it.onCreate(savedInstanceState) }
 
         view.findViewById<Button>(R.id.btn_prev_day).setOnClickListener {
@@ -117,9 +124,18 @@ class MapFragment : Fragment() {
         }
     }
 
-    /** Reloads the day list, applies a changed style, and redraws the current day. */
+    /** Reloads the day list (off the main thread), then applies a changed style and redraws the current day. */
     private fun refresh() {
-        daysWithData = db.daysWithFixes(ZoneId.systemDefault())
+        if (view == null) return
+        val zone = ZoneId.systemDefault()
+        io.execute {
+            val days = db.daysWithFixes(zone)
+            main.post { if (isAdded && view != null) applyRefresh(days) }
+        }
+    }
+
+    private fun applyRefresh(days: List<LocalDate>) {
+        daysWithData = days
         if (!pickedInitialDay && daysWithData.isNotEmpty()) {
             day = daysWithData.last()
             pickedInitialDay = true
@@ -206,22 +222,34 @@ class MapFragment : Fragment() {
         )
     }
 
+    /** Switches to [newDay]: the header updates now, the track once it is read from the database. */
     private fun show(newDay: LocalDate) {
         val view = view ?: return
         day = newDay
         val zone = ZoneId.systemDefault()
         val from = day.atStartOfDay(zone).toInstant().toEpochMilli()
         val to = day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val all = db.fixesBetween(from, to)
-        // Fixes with poor accuracy (typically cell-tower guesses) are shown
-        // faded but kept out of the path, distance and framing.
-        val good = all.filter { it.accuracyM <= MAX_GOOD_ACCURACY_M }
-        val framed = good.ifEmpty { all }
 
         view.findViewById<TextView>(R.id.day_label).text =
             day.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
         view.findViewById<Button>(R.id.btn_prev_day).isEnabled = daysWithData.any { it < day }
         view.findViewById<Button>(R.id.btn_next_day).isEnabled = daysWithData.any { it > day }
+
+        val token = ++dayLoad
+        photoLoad++ // drop the previous day's photos still loading
+        io.execute {
+            val all = db.fixesBetween(from, to)
+            main.post { if (token == dayLoad && isAdded) render(all, from, to, zone) }
+        }
+    }
+
+    private fun render(all: List<LocationDb.StoredFix>, from: Long, to: Long, zone: ZoneId) {
+        val view = view ?: return
+        dayFixes = all
+        // Fixes with poor accuracy (typically cell-tower guesses) are shown
+        // faded but kept out of the path, distance and framing.
+        val good = all.filter { it.accuracyM <= MAX_GOOD_ACCURACY_M }
+        val framed = good.ifEmpty { all }
 
         val stats = view.findViewById<TextView>(R.id.map_stats)
         val s = style ?: return
@@ -347,11 +375,7 @@ class MapFragment : Fragment() {
             stats.text = base + "\n📷 " + getString(R.string.map_photos_count, list.size, located.size)
         }
         // A day with photos but no tracked fixes: frame the photos instead.
-        if (located.isNotEmpty() && db.fixesBetween(
-                day.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                day.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            ).isEmpty()
-        ) {
+        if (located.isNotEmpty() && dayFixes.isEmpty()) {
             val m = map ?: return
             if (located.size == 1) {
                 m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(located[0].lat!!, located[0].lon!!), 15.0))
@@ -486,6 +510,11 @@ class MapFragment : Fragment() {
         style = null
         currentStyleUrl = null
         super.onDestroyView()
+    }
+
+    override fun onDestroy() {
+        io.shutdown()
+        super.onDestroy()
     }
 
     companion object {

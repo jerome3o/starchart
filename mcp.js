@@ -175,6 +175,7 @@ function registerGoalTools(server, email, canWrite) {
     async (input) => {
       const { fields, errors } = goals.validateGoalInput(input);
       if (errors.length) return error(errors.join('; '));
+      if (db.listGoals(email).length >= goals.MAX_ACTIVE_GOALS) return error(`At most ${goals.MAX_ACTIVE_GOALS} active goals.`);
       const goal = db.createGoal(email, {
         name: fields.name, emoji: fields.emoji, target: fields.target,
         periodDays: fields.period_days, hoursOffset: fields.hours_offset, description: fields.description,
@@ -291,6 +292,9 @@ function registerPhoneTools(server, email, clientName) {
   const runCommand = async (command, args, deviceId, waitSeconds) => {
     const device = deviceId != null ? db.deviceForEmail(email, deviceId) : db.mostRecentDevice(email);
     if (!device) return error('No linked phone found (see list_devices).');
+    // Limits so a misbehaving or hijacked client can't flood the phone.
+    if (db.pendingCommandCount(device.id) >= 10) return error('Too many commands are already waiting for the phone; try later.');
+    if (db.recentCommandCount(device.id, Date.now() - 3600e3) >= 60) return error('Phone command limit reached for this hour.');
     const id = db.queuePhoneCommand(device.id, command, args, clientName);
     const deadline = Date.now() + waitSeconds * 1000;
     let row = db.getPhoneCommand(email, id);
@@ -464,8 +468,9 @@ function buildServer(email, scopes, clientName) {
         last: new Date(used[used.length - 1].time).toISOString(),
         distance_km: Math.round(pathDistanceM(used) / 100) / 10,
         bounding_box: {
-          south: Math.min(...lats), north: Math.max(...lats),
-          west: Math.min(...lons), east: Math.max(...lons),
+          // Loops, not spread: a day with very many fixes would overflow the stack.
+          south: lats.reduce((a, b) => (b < a ? b : a), Infinity), north: lats.reduce((a, b) => (b > a ? b : a), -Infinity),
+          west: lons.reduce((a, b) => (b < a ? b : a), Infinity), east: lons.reduce((a, b) => (b > a ? b : a), -Infinity),
         },
         hourly_sample: downsample(used, 24).map(formatFix),
       });

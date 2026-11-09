@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.material.bottomnavigation.BottomNavigationView
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
 /**
  * Shell activity: bottom tabs for the star chart, chat, the map and settings.
@@ -51,12 +52,18 @@ class MainActivity : AppCompatActivity() {
         nav.selectedItemId = Prefs.get(this).getInt(Prefs.KEY_LAST_TAB, R.id.nav_starchart)
         showTab(nav.selectedItemId)
 
-        handlePairIntent(intent)
+        // Only a fresh launch carries a new pairing link: a recreation (rotation)
+        // or a relaunch from recents would replay the old intent.
+        if (savedInstanceState == null &&
+            (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0
+        ) {
+            consumePairIntent(intent)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handlePairIntent(intent)
+        consumePairIntent(intent)
     }
 
     override fun onResume() {
@@ -88,16 +95,52 @@ class MainActivity : AppCompatActivity() {
         Prefs.get(this).edit().putInt(Prefs.KEY_LAST_TAB, itemId).apply()
     }
 
-    private fun handlePairIntent(intent: Intent?) {
+    /** Handles a pairing link once, then swaps in a plain intent so it isn't replayed. */
+    private fun consumePairIntent(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme != "starchart" || data.host != "pair") return
-        val token = data.getQueryParameter("token")
-        if (token.isNullOrEmpty()) return
-        Sync.storeToken(this, token)
-        SyncWorker.schedulePeriodic(this)
-        SyncWorker.syncNow(this)
-        Toast.makeText(this, R.string.sync_linked_toast, Toast.LENGTH_LONG).show()
-        findViewById<BottomNavigationView>(R.id.bottom_nav).selectedItemId = R.id.nav_settings
+        setIntent(Intent(this, MainActivity::class.java))
+        // Only the one-time-code form is accepted; old ?token= links are ignored.
+        val code = data.getQueryParameter("code")
+        if (code.isNullOrEmpty()) return
+        val verifier = Sync.pendingVerifier(this)
+        if (verifier == null) {
+            Toast.makeText(this, R.string.pair_no_pending, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (Sync.isLinked(this)) {
+            MaterialAlertDialogBuilder(this)
+                .setMessage(R.string.pair_replace_confirm)
+                .setPositiveButton(R.string.pair_replace) { _, _ -> exchangePairCode(code, verifier) }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        } else {
+            exchangePairCode(code, verifier)
+        }
+    }
+
+    /** Trades the one-time code for a device token off the main thread. */
+    private fun exchangePairCode(code: String, verifier: String) {
+        val app = applicationContext
+        Thread {
+            val ok = try {
+                Sync.exchangePairCode(app, code, verifier)
+                true
+            } catch (_: Exception) {
+                false
+            }
+            runOnUiThread {
+                if (!ok) {
+                    Toast.makeText(app, R.string.pair_failed, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                SyncWorker.schedulePeriodic(app)
+                SyncWorker.syncNow(app)
+                Toast.makeText(app, R.string.sync_linked_toast, Toast.LENGTH_LONG).show()
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                findViewById<BottomNavigationView>(R.id.bottom_nav).selectedItemId = R.id.nav_settings
+            }
+        }.start()
     }
 
     companion object {

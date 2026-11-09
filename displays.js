@@ -93,17 +93,10 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
     const display = key ? db.getDisplayByKey(String(key)) : null;
     if (!display) {
       limiter.fail(req.ip);
-      // A device with a key from a previous server: surface it for approval,
-      // which will adopt the key it presented.
+      // Unknown keys are refused outright (no adoption, no friendly ID echoed):
+      // a new or reset device goes through /api/setup and approval.
       const mac = normalizeMac(req.get('ID'));
-      console.log(`[display] display unknown key (…${macTail(mac)}) fw=${req.get('FW-Version') || '?'} key=${key ? 'present' : 'missing'}`);
-      if (mac && key && String(key).length >= 8) {
-        const pending = db.recordPresentedKey(mac, db.hashToken(String(key)), req.get('FW-Version'));
-        return res.status(401).json({
-          status: 401,
-          message: `Approve display ${pending.friendly_id} at ${issuer} then refresh`,
-        });
-      }
+      console.log(`[display] display unknown key (…${macTail(mac)}) fw=${String(req.get('FW-Version') || '?').slice(0, 20)} key=${key ? 'present' : 'missing'}`);
       return res.status(401).json({ status: 401, message: 'invalid access token' });
     }
     db.touchDisplay(display.id, {
@@ -126,8 +119,9 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
   });
 
   router.post('/api/log', express.json({ limit: '16kb' }), (req, res) => {
-    const mac = normalizeMac(req.get('ID'));
-    const display = mac ? db.getDisplayByMac(mac) : null;
+    // Only the display's own key may report its battery/firmware/signal.
+    const key = req.get('Access-Token');
+    const display = key ? db.getDisplayByKey(String(key)) : null;
     if (display && display.status === 'active') {
       const body = req.body || {};
       db.touchDisplay(display.id, {
@@ -159,8 +153,10 @@ function createDisplayRouter({ issuer, secret, requireAuth, page }) {
   });
 
   router.post('/displays/:id/approve', requireAuth, express.urlencoded({ extended: false }), (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.redirect('/');
     const label = req.body && req.body.label ? String(req.body.label).slice(0, 60) : null;
-    db.approveDisplay(req.session.user.email, { id: Number(req.params.id), label });
+    db.approveDisplay(req.session.user.email, { id, label });
     res.redirect('/');
   });
 

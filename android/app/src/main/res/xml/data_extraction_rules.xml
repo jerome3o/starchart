@@ -1,10 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Keep the device token out of cloud backups and device transfers. -->
+<!--
+  Keep the device token, the location history and the chat transcript out of
+  cloud backups and device transfers: none of it should leave the phone that way.
+-->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="sync.xml" />
+        <exclude domain="sharedpref" path="starchart.xml" />
+        <exclude domain="database" path="locations.db" />
+        <exclude domain="database" path="locations.db-journal" />
+        <exclude domain="database" path="locations.db-wal" />
+        <exclude domain="database" path="locations.db-shm" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="sync.xml" />
+        <exclude domain="sharedpref" path="starchart.xml" />
+        <exclude domain="database" path="locations.db" />
+        <exclude domain="database" path="locations.db-journal" />
+        <exclude domain="database" path="locations.db-wal" />
+        <exclude domain="database" path="locations.db-shm" />
     </device-transfer>
 </data-extraction-rules>

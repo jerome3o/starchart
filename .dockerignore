@@ -9,3 +9,10 @@ README.md
 fly.toml
 android
 examples
+data
+*.db
+*.db-*
+.claude
+Dockerfile
+.dockerignore
+.env.example

@@ -17,14 +17,11 @@ const {
   GOOGLE_CLIENT_SECRET,
   SESSION_SECRET,
   BASE_URL,
-  ALLOWED_EMAILS = '',
   NODE_ENV,
 } = process.env;
 
 const isProd = NODE_ENV === 'production';
-const allowedEmails = ALLOWED_EMAILS.split(',')
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
+const { allowedEmails, isAllowed } = require('./config');
 
 // Fail closed: without a real session secret anyone who has read this public
 // code could forge a login cookie, so production refuses to start.
@@ -39,6 +36,7 @@ if (!allowedEmails.length) {
 
 // Fly terminates TLS at its edge proxy; trust it so req.protocol is https.
 app.set('trust proxy', 1);
+app.disable('x-powered-by');
 
 app.use(
   cookieSession({
@@ -83,6 +81,8 @@ app.use((req, res, next) => {
   next();
 });
 
+const escHtml = (x) => String(x ?? '').replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
+
 function baseUrl(req) {
   return (BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
 }
@@ -95,8 +95,17 @@ function oauthConfigured() {
   return Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 }
 
+// Sessions are signed cookies, so the server enforces their age itself (a
+// copied cookie would otherwise work forever) and re-checks the allow-list.
+const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+function sessionValid(req) {
+  const s = req.session;
+  return Boolean(s && s.user && isAllowed(s.user.email) && s.iat && Date.now() - s.iat < SESSION_MAX_AGE_MS);
+}
+
 function requireAuth(req, res, next) {
-  if (req.session && req.session.user) return next();
+  if (sessionValid(req)) return next();
+  if (req.session && req.session.user) req.session = null;
   // Remember where the user was headed so login can resume it (pairing flow).
   if (req.session) req.session.returnTo = req.originalUrl;
   return res.redirect('/login');
@@ -142,7 +151,7 @@ function page(title, body) {
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 
 app.get('/login', (req, res) => {
-  if (req.session && req.session.user) return res.redirect('/');
+  if (sessionValid(req)) return res.redirect('/');
   if (!oauthConfigured()) {
     return res
       .status(500)
@@ -214,13 +223,14 @@ app.get('/auth/google/callback', async (req, res) => {
       return res.status(403).send('Your Google email is not verified.');
     }
     // An empty allow-list lets nobody in.
-    if (!allowedEmails.includes(email)) {
+    if (!isAllowed(email)) {
       const safe = email.replace(/[<>&"']/g, '');
       return res
         .status(403)
         .send(page('Access denied', `<h1>🚫 Access denied</h1><p>${safe} is not on the allow-list.</p><a class="btn" href="/logout">Try another account</a>`));
     }
 
+    req.session.iat = Date.now();
     req.session.user = {
       email: profile.email,
       name: profile.name,
@@ -247,25 +257,77 @@ app.post('/logout', (req, res) => {
 
 // --- Device pairing & sync API ---------------------------------------------
 
-// Opened by the Android app in a browser tab. After Google login, mints a
-// device token and hands it back to the app via the starchart:// deep link.
-// The token only ever travels inside this device (custom-scheme intents are
-// resolved locally), and the server keeps just its hash.
+// Pairing, proof-of-possession style (like PKCE): the app opens this page with
+// challenge = base64url(SHA-256(verifier)) and keeps the verifier. After an
+// explicit confirm (a POST, so the cross-site check applies), the browser is
+// sent back to the app with a short-lived one-time code. Only the holder of the
+// verifier can exchange that code for a device token at /api/pair/exchange, so
+// another app that intercepts the starchart:// link gets nothing usable.
+const PAIR_CODE_TTL_MS = 5 * 60 * 1000;
+const pairCodes = new Map(); // code -> { email, label, challenge, expires }
+const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const cleanLabel = (raw) => String(raw || 'Android device').replace(/[^\p{L}\p{N} ._'()-]/gu, '').trim().slice(0, 40) || 'Android device';
+const validChallenge = (c) => typeof c === 'string' && /^[A-Za-z0-9_-]{43}$/.test(c);
+
 app.get('/pair/start', requireAuth, (req, res) => {
-  const label = String(req.query.label || 'Android device').slice(0, 64);
-  const token = db.createDevice(req.session.user.email, label);
-  const deepLink = `starchart://pair?token=${token}`;
+  res.set('Cache-Control', 'no-store');
+  const challenge = String(req.query.challenge || '');
+  const label = cleanLabel(req.query.label);
+  if (!validChallenge(challenge)) {
+    return res.status(400).send(page('Update the app', '<h1>📱 Update Starchart</h1><p>This version of the app can\'t link. Update it in Obtainium, then tap “Link to server” again.</p>'));
+  }
+  res.send(
+    page(
+      'Link device — Starchart',
+      `<h1>📱 Link this phone?</h1>
+       <p>Link <strong>${label}</strong> to <strong>${escHtml(req.session.user.email)}</strong>.
+       It will be able to upload your location and run your goals.</p>
+       <form method="POST" action="/pair/confirm">
+         <input type="hidden" name="challenge" value="${challenge}" />
+         <input type="hidden" name="label" value="${label}" />
+         <button class="btn" type="submit">Link phone</button>
+       </form>
+       <p class="muted">Only continue if you just tapped “Link to server” in the Starchart app.</p>`
+    )
+  );
+});
+
+app.post('/pair/confirm', requireAuth, express.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const challenge = String((req.body || {}).challenge || '');
+  if (!validChallenge(challenge)) return res.status(400).send('Bad request');
+  const now = Date.now();
+  for (const [k, v] of pairCodes) if (v.expires < now) pairCodes.delete(k);
+  if (pairCodes.size > 50) return res.status(429).send('Too many pending links; try again in a few minutes');
+  const code = crypto.randomBytes(32).toString('hex');
+  pairCodes.set(code, { email: req.session.user.email, label: cleanLabel((req.body || {}).label), challenge, expires: now + PAIR_CODE_TTL_MS });
+  const deepLink = `starchart://pair?code=${code}`;
   res.send(
     page(
       'Link device — Starchart',
       `<h1>📱 Almost there</h1>
-       <p>Linking <strong>${label.replace(/[<>&]/g, '')}</strong> to
-       <strong>${req.session.user.email}</strong>.</p>
        <a class="btn" href="${deepLink}">Open Starchart to finish</a>
-       <p class="muted">If nothing happens, open the Starchart app manually and try again.</p>
+       <p class="muted">If nothing happens, tap the button. The link works once, for 5 minutes.</p>
        <script>location.href = ${JSON.stringify(deepLink)};</script>`
     )
   );
+});
+
+// No session or bearer: the code plus the matching verifier is the credential.
+const pairLimiter = require('./ratelimit')({ max: 10, windowMs: 10 * 60_000 });
+app.post('/api/pair/exchange', express.json({ limit: '2kb' }), (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (pairLimiter.blocked(req.ip)) return res.status(429).json({ error: 'too_many_requests' });
+  const { code, verifier } = req.body || {};
+  const entry = typeof code === 'string' ? pairCodes.get(code) : null;
+  if (entry) pairCodes.delete(code); // single use, even on a wrong verifier
+  const ok = entry && entry.expires > Date.now() && typeof verifier === 'string' && verifier.length >= 43 && verifier.length <= 128 &&
+    crypto.timingSafeEqual(Buffer.from(b64url(crypto.createHash('sha256').update(verifier).digest())), Buffer.from(entry.challenge));
+  if (!ok || !isAllowed(entry.email)) {
+    pairLimiter.fail(req.ip);
+    return res.status(400).json({ error: 'invalid or expired code' });
+  }
+  res.json({ token: db.createDevice(entry.email, entry.label) });
 });
 
 app.post('/devices/:id/revoke', requireAuth, express.urlencoded({ extended: false }), (req, res) => {
@@ -387,9 +449,7 @@ app.get('/', requireAuth, (req, res) => {
     ? displays
         .map((d) => {
           if (d.status === 'pending') {
-            const how = d.presented_key_hash
-              ? 'arrived with a key from a previous server (approving adopts it)'
-              : 'asked to be set up';
+            const how = 'asked to be set up — only approve it if you just pressed the button on that display';
             return `<li style="text-align:left;margin:.5rem 0;">
               <strong>New device ${esc(d.friendly_id)}</strong> (${esc(d.mac)}) ${how} ${fmt(d.created_at)}
               <form method="POST" action="/displays/${d.id}/approve" style="display:inline">
@@ -402,11 +462,9 @@ app.get('/', requireAuth, (req, res) => {
             </li>`;
           }
           if (d.status !== 'active') return '';
-          const battery = d.battery_voltage ? ` · ${d.battery_voltage.toFixed(2)} V` : '';
+          const battery = Number.isFinite(Number(d.battery_voltage)) && d.battery_voltage !== null ? ` · ${Number(d.battery_voltage).toFixed(2)} V` : '';
           const resetup = d.setup_requested_at
-            ? `<br /><span style="color:#ffcf6b">${d.presented_key_hash
-                ? `Presented a different key ${fmt(d.setup_requested_at)} — approving adopts it.`
-                : `Asked to be set up again ${fmt(d.setup_requested_at)} — approving issues a new key.`}</span>
+            ? `<br /><span style="color:#ffcf6b">Asked to be set up again ${fmt(d.setup_requested_at)}. Only approve if you just reset this display yourself; the new key is collectable for 10 minutes.</span>
                <form method="POST" action="/displays/${d.id}/approve" style="display:inline">
                  <button class="btn" style="${smallBtn};background:#2f7a4b" type="submit">Approve re-setup</button>
                </form>`
@@ -428,9 +486,9 @@ app.get('/', requireAuth, (req, res) => {
   res.send(
     page(
       'Starchart',
-      `${u.picture ? `<img class="avatar" src="${u.picture}" alt="" referrerpolicy="no-referrer" />` : ''}
-       <h1>⭐ Hello, ${u.name || u.email}</h1>
-       <p>You're signed in as <strong>${u.email}</strong>.</p>
+      `${u.picture && /^https:\/\//.test(u.picture) ? `<img class="avatar" src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer" />` : ''}
+       <h1>⭐ Hello, ${esc(u.name || u.email)}</h1>
+       <p>You're signed in as <strong>${esc(u.email)}</strong>.</p>
        <p style="margin-bottom:0"><strong>Devices</strong></p>
        <ul style="list-style:none;padding:0">${deviceRows}</ul>
        <p style="margin-bottom:0"><strong>Connected apps (MCP)</strong></p>

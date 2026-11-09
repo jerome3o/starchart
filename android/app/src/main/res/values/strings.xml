@@ -128,8 +128,12 @@
     <string name="btn_link_server">Link to server</string>
     <string name="btn_unlink_server">Unlink from server</string>
     <string name="btn_sync_now">Sync now</string>
+    <string name="pair_no_pending">This pairing link has expired. Tap “Link to server” again.</string>
+    <string name="pair_replace_confirm">Replace the current server link?</string>
+    <string name="pair_replace">Replace</string>
+    <string name="pair_failed">Couldn’t link to the server. The current link (if any) is unchanged.</string>
     <string name="sync_linked_toast">Linked! Uploading location history…</string>
-    <string name="sync_unlinked_toast">Unlinked. Also revoke this device on the website.</string>
+    <string name="sync_unlinked_toast">Unlinked from the server.</string>
     <string name="sync_not_linked_toast">Link to the server first.</string>
     <string name="sync_started_toast">Sync started.</string>
 

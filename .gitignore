@@ -13,3 +13,8 @@ android/local.properties
 
 # Server data
 data/
+
+# Local build/tool output
+android/.kotlin/
+*.db
+google-services.json

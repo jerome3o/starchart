@@ -25,7 +25,7 @@ object TrackingLog {
 
     fun log(context: Context, kind: String, detail: String? = null, timeMs: Long = System.currentTimeMillis()) {
         try {
-            LocationDb(context).insertEvent(timeMs, kind, detail)
+            LocationDb.get(context).insertEvent(timeMs, kind, detail)
         } catch (_: Exception) {}
     }
 
