@@ -79,7 +79,7 @@ function fitText(ctx, str, maxWidth, size, bold) {
   return `${chars.join('').trimEnd()}…`;
 }
 
-function drawProgressBar(ctx, { x, y, width, height, count, target, hoursOffset, periodDays }) {
+function drawProgressBar(ctx, { x, y, width, height, count, failed = 0, target, hoursOffset, periodDays }) {
   const border = 2;
   const innerX = x + border;
   const innerW = width - border * 2;
@@ -92,6 +92,14 @@ function drawProgressBar(ctx, { x, y, width, height, count, target, hoursOffset,
   rect(ctx, innerX, innerY, innerW, innerH, '#fff');
   if (graceW > 0) hatch(ctx, innerX, innerY, innerX + graceW, innerY + innerH, 3);
   rect(ctx, innerX + graceW, innerY, filledW, innerH);
+  // Failures follow the completions as a dense dot pattern (e-ink has no red).
+  const failedW = Math.min(innerW - graceW - filledW,
+    Math.round(Math.min(failed / target, 1) * innerW));
+  if (failedW > 0) {
+    const fx = innerX + graceW + filledW;
+    rect(ctx, fx, innerY, failedW, innerH, '#fff');
+    hatch(ctx, fx, innerY, fx + failedW, innerY + innerH, 2);
+  }
 
   // Segment dividers for whole-number targets (every 5th when there are many).
   if (Number.isInteger(target) && target > 1) {
@@ -161,7 +169,8 @@ function drawDashboardData(data, nowMs) {
 
     // Count on the right ("3/8", "+2" when over target), name truncated to fit.
     const over = g.count > g.target ? `  +${fmtNumber(g.count - g.target)}` : '';
-    const countStr = `${g.count}/${fmtNumber(g.target)}${over}`;
+    const fails = g.failed ? `  ✗${g.failed}` : '';
+    const countStr = `${g.count}/${fmtNumber(g.target)}${over}${fails}`;
     ctx.font = `bold ${labelSize}px ${FAMILY}`;
     const countW = ctx.measureText(countStr).width;
     // A white plate keeps labels readable over the weekend hatch.
@@ -183,7 +192,7 @@ function drawDashboardData(data, nowMs) {
     const barW = dayX(startDay + g.period_days) - barX;
     drawProgressBar(ctx, {
       x: barX, y: top + labelSize + gap, width: barW, height: barH,
-      count: g.count, target: g.target, hoursOffset: g.hours_offset, periodDays: g.period_days,
+      count: g.count, failed: g.failed || 0, target: g.target, hoursOffset: g.hours_offset, periodDays: g.period_days,
     });
   });
 

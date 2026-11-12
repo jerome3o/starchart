@@ -98,7 +98,7 @@ function registerGoalTools(server, email, canWrite) {
     'list_goals',
     {
       title: 'List goals',
-      description: "The user's habit goals with progress for the current period: count so far, target, expected-by-now pace, on_track/behind status, and days left.",
+      description: "The user's habit goals with progress for the current period: count so far, failed (times they logged that they didn't do it), target, expected-by-now pace, on_track/behind status, and days left.",
       inputSchema: {},
     },
     async () => json(goals.goalsWithProgress(email))
@@ -125,18 +125,19 @@ function registerGoalTools(server, email, canWrite) {
     'log_completion',
     {
       title: 'Log a goal completion',
-      description: 'Record that the user did a goal once (e.g. went to the gym). Identify the goal by id or name.',
+      description: "Record that the user did a goal once (e.g. went to the gym), or with failed: true that they had the chance and didn't (a red mark that doesn't count towards the target). Identify the goal by id or name.",
       inputSchema: {
         goal_id: z.number().int().optional(),
         goal_name: z.string().optional().describe('Case-insensitive; partial match allowed'),
         note: z.string().max(200).optional(),
+        failed: z.boolean().optional().describe('Log a failure instead of a completion'),
       },
     },
-    async ({ goal_id, goal_name, note }) => {
+    async ({ goal_id, goal_name, note, failed }) => {
       const goal = resolveGoal(goal_id, goal_name);
       if (!goal) return error('No matching goal. Use list_goals to see them.');
-      const result = goals.logCompletion(email, goal.id, { source: 'mcp', note });
-      return json({ logged: true, goal: result.goal });
+      const result = goals.logCompletion(email, goal.id, { source: 'mcp', note, failed: failed === true });
+      return json({ logged: true, failed: failed === true, goal: result.goal });
     }
   );
 
@@ -144,7 +145,7 @@ function registerGoalTools(server, email, canWrite) {
     'undo_completion',
     {
       title: 'Undo a goal completion',
-      description: "Remove the most recent completion of a goal in the current period (e.g. it was logged by mistake).",
+      description: "Remove the most recent completion or failure of a goal in the current period (e.g. it was logged by mistake).",
       inputSchema: {
         goal_id: z.number().int().optional(),
         goal_name: z.string().optional(),
@@ -241,7 +242,7 @@ function registerOverviewTool(server, email, allowed) {
         out.timezone = data.timezone;
         if (p) out.period = { start: p.startDate, end: p.endDate, day: p.dayOfPeriod + 1, of_days: p.periodDays, days_left: p.daysLeft };
         out.goals = data.goals.map((g) => ({
-          name: g.name, emoji: g.emoji, description: g.description, done: g.count, target: g.target,
+          name: g.name, emoji: g.emoji, description: g.description, done: g.count, failed: g.failed, target: g.target,
           expected_by_now: g.target_by_now, status: g.count >= g.target ? 'complete' : g.status,
           period_days: g.period_days,
         }));

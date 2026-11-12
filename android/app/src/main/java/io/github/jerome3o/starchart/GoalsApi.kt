@@ -23,6 +23,8 @@ object GoalsApi {
         val periodEnd: String,
         /** What the goal is and why (used by Claude's chat and nudges). */
         val description: String? = null,
+        /** Logged failures this period (red segments; don't count towards the target). */
+        val failed: Int = 0,
     ) {
         val isBehind get() = status == "behind"
         val complete get() = count >= target
@@ -66,6 +68,7 @@ object GoalsApi {
         periodStart = g.getString("period_start"),
         periodEnd = g.getString("period_end"),
         description = if (g.isNull("description")) null else g.optString("description").ifEmpty { null },
+        failed = g.optInt("failed", 0),
     )
 
     fun fetch(context: Context): Snapshot {
@@ -106,7 +109,8 @@ object GoalsApi {
                 .put("target", g.target).put("period_days", g.periodDays).put("hours_offset", g.hoursOffset)
                 .put("count", g.count).put("target_by_now", g.targetByNow).put("status", g.status)
                 .put("days_left", g.daysLeft).put("period_start", g.periodStart).put("period_end", g.periodEnd)
-                .put("description", g.description ?: JSONObject.NULL))
+                .put("description", g.description ?: JSONObject.NULL)
+                .put("failed", g.failed))
         }
         return JSONObject().put("timezone", s.timezone).put("periods", periods).put("goals", goals)
     }
@@ -128,14 +132,18 @@ object GoalsApi {
         Sync.call(context, "POST", "/api/goals/$id", JSONObject().put("archived", true))
     }
 
-    /** [clientId] makes retries idempotent; pass the same one for the same tap. */
-    fun logCompletion(context: Context, id: Long, clientId: String? = null): Goal =
+    /**
+     * Logs a completion, or with [failed] a failure. [clientId] makes retries
+     * idempotent; pass the same one for the same slide.
+     */
+    fun logCompletion(context: Context, id: Long, clientId: String? = null, failed: Boolean = false): Goal =
         cacheGoal(
             context,
             parseGoal(
                 Sync.call(
                     context, "POST", "/api/goals/$id/completions",
                     JSONObject().put("client_id", clientId ?: UUID.randomUUID().toString())
+                        .apply { if (failed) put("failed", true) }
                 )
             )
         )

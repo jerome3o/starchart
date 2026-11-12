@@ -199,6 +199,12 @@ if (!goalColumns.includes('description')) {
   // Free text: what the goal is and why it matters (used by chat and nudges).
   db.exec('ALTER TABLE goals ADD COLUMN description TEXT');
 }
+const completionColumns = db.prepare('PRAGMA table_info(completions)').all().map((c) => c.name);
+if (!completionColumns.includes('failed')) {
+  // A logged failure ("I didn't do it") takes a slot in the period like a
+  // completion but doesn't count towards the target.
+  db.exec('ALTER TABLE completions ADD COLUMN failed INTEGER NOT NULL DEFAULT 0');
+}
 const settingsColumns = db.prepare('PRAGMA table_info(user_settings)').all().map((c) => c.name);
 if (!settingsColumns.includes('nudges_enabled')) {
   db.exec('ALTER TABLE user_settings ADD COLUMN nudges_enabled INTEGER NOT NULL DEFAULT 1');
@@ -337,7 +343,7 @@ function emailsWithGoals() {
 
 function recentCompletionTimes(goalId, limit = 20) {
   return db.prepare(
-    'SELECT time FROM completions WHERE goal_id = ? AND deleted_at IS NULL ORDER BY time DESC LIMIT ?'
+    'SELECT time FROM completions WHERE goal_id = ? AND deleted_at IS NULL AND failed = 0 ORDER BY time DESC LIMIT ?'
   ).all(goalId, limit).map((r) => r.time);
 }
 
@@ -645,36 +651,38 @@ function updateGoal(email, id, fields) {
   return getGoal(email, id);
 }
 
-// Active completion count per goal within [fromMs, toMs).
+// Active completion and failure counts per goal within [fromMs, toMs):
+// Map(goalId -> {done, failed}).
 function completionCounts(goalIds, fromMs, toMs) {
   if (!goalIds.length) return new Map();
   const rows = db
     .prepare(
-      `SELECT goal_id, COUNT(*) AS c FROM completions
+      `SELECT goal_id, SUM(failed = 0) AS done, SUM(failed = 1) AS failed FROM completions
        WHERE goal_id IN (${goalIds.map(() => '?').join(',')})
          AND deleted_at IS NULL AND time >= ? AND time < ?
        GROUP BY goal_id`
     )
     .all(...goalIds, fromMs, toMs);
-  return new Map(rows.map((r) => [r.goal_id, r.c]));
+  return new Map(rows.map((r) => [r.goal_id, { done: r.done || 0, failed: r.failed || 0 }]));
 }
 
 function listCompletions(goalId, fromMs, toMs) {
   return db
     .prepare(
-      `SELECT id, time, source, note FROM completions
+      `SELECT id, time, source, note, failed FROM completions
        WHERE goal_id = ? AND deleted_at IS NULL AND time >= ? AND time < ? ORDER BY time ASC`
     )
-    .all(goalId, fromMs, toMs);
+    .all(goalId, fromMs, toMs)
+    .map((r) => ({ ...r, failed: r.failed === 1 }));
 }
 
 // Returns {id, created}; a repeated client_id is a no-op (created: false).
-function addCompletion(goalId, { time, source, clientId, note }) {
+function addCompletion(goalId, { time, source, clientId, note, failed = false }) {
   const info = db
     .prepare(
-      `INSERT OR IGNORE INTO completions (goal_id, time, source, client_id, note) VALUES (?, ?, ?, ?, ?)`
+      `INSERT OR IGNORE INTO completions (goal_id, time, source, client_id, note, failed) VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(goalId, time, source, clientId || null, note || null);
+    .run(goalId, time, source, clientId || null, note || null, failed ? 1 : 0);
   return { id: info.lastInsertRowid, created: info.changes === 1 };
 }
 

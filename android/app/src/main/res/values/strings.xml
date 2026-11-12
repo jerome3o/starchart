@@ -42,7 +42,8 @@
     <string name="goals_empty">No goals yet — tap New goal to add one.</string>
     <string name="goals_load_failed">Couldn\'t load goals: %1$s</string>
     <string name="goal_action_failed">That didn\'t save: %1$s</string>
-    <string name="slide_to_log">Slide to log</string>
+    <string name="slide_to_log">Did it ▶</string>
+    <string name="slide_to_fail">◀ Failed</string>
     <string name="btn_undo">−</string>
     <string name="goal_count">%1$d/%2$s</string>
     <string name="status_on_track">On track · %1$d days left</string>

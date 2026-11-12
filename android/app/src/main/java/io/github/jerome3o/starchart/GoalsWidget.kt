@@ -61,6 +61,7 @@ class GoalsWidgetProvider : AppWidgetProvider() {
     companion object {
         const val EXTRA_GOAL_ID = "goal_id"
         const val KEY_CLIENT_ID = "client_id"
+        const val KEY_FAILED = "failed"
         private const val REFRESH_WORK = "widget-refresh"
 
         private fun networkConstraint() =
@@ -75,14 +76,14 @@ class GoalsWidgetProvider : AppWidgetProvider() {
         }
 
         /**
-         * Logs a completion tapped on the widget: bumps the cached count so the
-         * widget updates instantly, then a worker posts it (idempotent client
-         * id, retried until the server has it).
+         * Logs a completion (or with [failed], a failure) slid on the widget's
+         * card: bumps the cached counts so the widget updates instantly, then a
+         * worker posts it (idempotent client id, retried until the server has it).
          */
-        fun logFromWidget(context: Context, goalId: Long) {
+        fun logFromWidget(context: Context, goalId: Long, failed: Boolean = false) {
             GoalsApi.cached(context)?.let { snap ->
                 snap.goals.find { it.id == goalId }?.let { g ->
-                    val bumped = g.copy(
+                    val bumped = if (failed) g.copy(failed = g.failed + 1) else g.copy(
                         count = g.count + 1,
                         status = if (g.count + 1 < g.targetByNow) "behind" else "on_track",
                     )
@@ -93,7 +94,9 @@ class GoalsWidgetProvider : AppWidgetProvider() {
                 OneTimeWorkRequestBuilder<WidgetLogWorker>()
                     .setConstraints(networkConstraint())
                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-                    .setInputData(workDataOf(EXTRA_GOAL_ID to goalId, KEY_CLIENT_ID to UUID.randomUUID().toString()))
+                    .setInputData(workDataOf(
+                        EXTRA_GOAL_ID to goalId, KEY_CLIENT_ID to UUID.randomUUID().toString(), KEY_FAILED to failed,
+                    ))
                     .build()
             )
         }
@@ -177,7 +180,7 @@ class GoalsWidgetProvider : AppWidgetProvider() {
             val row = RemoteViews(context.packageName, layout)
             row.setTextViewText(R.id.widget_goal_name, "${g.emoji ?: "⭐"}  ${g.name}")
             val target = if (g.target == Math.floor(g.target)) g.target.toLong().toString() else g.target.toString()
-            row.setTextViewText(R.id.widget_goal_count, "${g.count}/$target")
+            row.setTextViewText(R.id.widget_goal_count, "${g.count}/$target" + if (g.failed > 0) " ✗${g.failed}" else "")
 
             // "Now" and pace from the period dates and the clock, so they keep
             // moving between syncs; count comes from the last snapshot.
@@ -234,7 +237,7 @@ class WidgetLogWorker(context: Context, params: WorkerParameters) : Worker(conte
         val clientId = inputData.getString(GoalsWidgetProvider.KEY_CLIENT_ID)
         if (goalId < 0 || !Sync.isLinked(applicationContext)) return Result.failure()
         return try {
-            GoalsApi.logCompletion(applicationContext, goalId, clientId)
+            GoalsApi.logCompletion(applicationContext, goalId, clientId, inputData.getBoolean(GoalsWidgetProvider.KEY_FAILED, false))
             GoalsApi.fetch(applicationContext) // authoritative counts and pace
             Result.success()
         } catch (_: Sync.UnauthorizedException) {

@@ -28,6 +28,7 @@ class StarChartFragment : Fragment() {
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val sound = ChargeSound()
+    private var tint: FailTint? = null
     private lateinit var haptics: Haptics
     private val shakeRandom = java.util.Random()
     private var snapshot: GoalsApi.Snapshot? = null
@@ -63,6 +64,7 @@ class StarChartFragment : Fragment() {
     override fun onPause() {
         sound.stop()
         stopShake()
+        tint?.clear()
         super.onPause()
     }
 
@@ -151,10 +153,14 @@ class StarChartFragment : Fragment() {
         mutate(optimistic) { GoalsApi.logCompletion(requireContext(), goal.id) }
     }
 
+    private fun logFailure(goal: GoalsApi.Goal) {
+        mutate(goal.copy(failed = goal.failed + 1)) { GoalsApi.logCompletion(requireContext(), goal.id, failed = true) }
+    }
+
+    /** Removes whatever was logged last (a completion or a failure); the server decides which. */
     private fun undo(goal: GoalsApi.Goal) {
-        if (goal.count <= 0) return
-        val optimistic = goal.copy(count = goal.count - 1, status = if (goal.count - 1 < goal.targetByNow) "behind" else "on_track")
-        mutate(optimistic) { GoalsApi.undo(requireContext(), goal.id) }
+        if (goal.count + goal.failed <= 0) return
+        mutate(null) { GoalsApi.undo(requireContext(), goal.id) }
     }
 
     private fun showMenu(anchor: View, goal: GoalsApi.Goal) {
@@ -255,25 +261,39 @@ class StarChartFragment : Fragment() {
 
         override fun onChargeProgress(progress: Float) {
             sound.level = progress
-            shake(progress)
+            shake(kotlin.math.abs(progress))
+            if (tint == null) tint = activity?.findViewById<ViewGroup>(android.R.id.content)?.let { FailTint(it) }
+            tint?.update(progress)
         }
 
         override fun onNotch(index: Int, progress: Float) {
             haptics.tick((index + 1f) / slider.notches.size)
         }
 
-        override fun onChargeComplete() {
-            haptics.celebrate()
-            sound.chime()
+        override fun onChargeComplete(failed: Boolean) {
             sound.stop()
             stopShake()
-            activity?.findViewById<ViewGroup>(android.R.id.content)?.let { CelebrationView.show(it) }
-            logCompletion(goal)
+            tint?.clear()
+            tint = null
+            val root = activity?.findViewById<ViewGroup>(android.R.id.content)
+            if (failed) {
+                haptics.fail()
+                sound.wahWah()
+                root?.let { FailView.show(it) }
+                logFailure(goal)
+            } else {
+                haptics.celebrate()
+                sound.chime()
+                root?.let { CelebrationView.show(it) }
+                logCompletion(goal)
+            }
         }
 
         override fun onChargeRelease(completed: Boolean) {
             sound.stop()
             stopShake()
+            tint?.clear()
+            tint = null
         }
     }
 
@@ -312,15 +332,17 @@ class StarChartFragment : Fragment() {
                 name.text = goal.name
                 description.text = goal.description ?: ""
                 description.visibility = if (goal.description.isNullOrBlank()) View.GONE else View.VISIBLE
-                count.text = getString(R.string.goal_count, goal.count, formatNumber(goal.target))
-                bar.set(goal.count, goal.target, goal.targetByNow, goal.isBehind && !goal.complete)
+                count.text = getString(R.string.goal_count, goal.count, formatNumber(goal.target)) +
+                    if (goal.failed > 0) "  ✗${goal.failed}" else ""
+                bar.set(goal.count, goal.failed, goal.target, goal.targetByNow, goal.isBehind && !goal.complete)
                 status.text = when {
                     goal.complete -> getString(R.string.status_complete, goal.daysLeft)
                     goal.isBehind -> getString(R.string.status_behind, goal.targetByNow, goal.daysLeft)
                     else -> getString(R.string.status_on_track, goal.daysLeft)
                 }
-                undoButton.isEnabled = goal.count > 0
+                undoButton.isEnabled = goal.count + goal.failed > 0
                 slider.label = getString(R.string.slide_to_log)
+                slider.failLabel = getString(R.string.slide_to_fail)
                 slider.listener = chargeListener(goal, slider)
                 undoButton.setOnClickListener { undo(goal) }
                 menu.setOnClickListener { showMenu(it, goal) }
