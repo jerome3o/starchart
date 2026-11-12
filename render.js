@@ -79,7 +79,15 @@ function fitText(ctx, str, maxWidth, size, bold) {
   return `${chars.join('').trimEnd()}…`;
 }
 
-function drawProgressBar(ctx, { x, y, width, height, count, failed = 0, target, hoursOffset, periodDays }) {
+// What each slot of a bar shows, oldest first ('d' done, 'f' failed). When
+// more was logged than fits, the most recent entries win.
+function visibleSequence({ sequence, count, failed = 0, target }) {
+  const seq = typeof sequence === 'string' ? sequence : 'd'.repeat(count) + 'f'.repeat(failed);
+  const slots = Math.ceil(target);
+  return seq.length > slots ? seq.slice(seq.length - slots) : seq;
+}
+
+function drawProgressBar(ctx, { x, y, width, height, count, failed = 0, sequence, target, hoursOffset, periodDays }) {
   const border = 2;
   const innerX = x + border;
   const innerW = width - border * 2;
@@ -88,18 +96,22 @@ function drawProgressBar(ctx, { x, y, width, height, count, failed = 0, target, 
 
   // Grace period: a hatched block at the start that counts as "free" time.
   const graceW = Math.min(innerW, Math.round(((hoursOffset / 24) / periodDays) * innerW));
-  const filledW = Math.min(innerW - graceW, Math.round(Math.min(count / target, 1) * innerW));
   rect(ctx, innerX, innerY, innerW, innerH, '#fff');
   if (graceW > 0) hatch(ctx, innerX, innerY, innerX + graceW, innerY + innerH, 3);
-  rect(ctx, innerX + graceW, innerY, filledW, innerH);
-  // Failures follow the completions as a dense dot pattern (e-ink has no red).
-  const failedW = Math.min(innerW - graceW - filledW,
-    Math.round(Math.min(failed / target, 1) * innerW));
-  if (failedW > 0) {
-    const fx = innerX + graceW + filledW;
-    rect(ctx, fx, innerY, failedW, innerH, '#fff');
-    hatch(ctx, fx, innerY, fx + failedW, innerY + innerH, 2);
+
+  // One slot per entry, in the order they were logged: solid for done, a
+  // dense dot pattern for failed (e-ink has no red).
+  const seq = visibleSequence({ sequence, count, failed, target });
+  const start = innerX + graceW;
+  const end = innerX + innerW;
+  const slotX = (i) => Math.min(end, start + Math.round((i / target) * innerW));
+  for (let i = 0; i < seq.length; i++) {
+    const x0 = slotX(i);
+    const x1 = slotX(i + 1);
+    if (seq[i] === 'f') hatch(ctx, x0, innerY, x1, innerY + innerH, 2);
+    else rect(ctx, x0, innerY, x1 - x0, innerH);
   }
+  const filledW = slotX(seq.length) - start;
 
   // Segment dividers for whole-number targets (every 5th when there are many).
   if (Number.isInteger(target) && target > 1) {
@@ -192,7 +204,7 @@ function drawDashboardData(data, nowMs) {
     const barW = dayX(startDay + g.period_days) - barX;
     drawProgressBar(ctx, {
       x: barX, y: top + labelSize + gap, width: barW, height: barH,
-      count: g.count, failed: g.failed || 0, target: g.target, hoursOffset: g.hours_offset, periodDays: g.period_days,
+      count: g.count, failed: g.failed || 0, sequence: g.sequence, target: g.target, hoursOffset: g.hours_offset, periodDays: g.period_days,
     });
   });
 

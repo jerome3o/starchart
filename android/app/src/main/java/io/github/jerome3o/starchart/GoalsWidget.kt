@@ -83,10 +83,7 @@ class GoalsWidgetProvider : AppWidgetProvider() {
         fun logFromWidget(context: Context, goalId: Long, failed: Boolean = false) {
             GoalsApi.cached(context)?.let { snap ->
                 snap.goals.find { it.id == goalId }?.let { g ->
-                    val bumped = if (failed) g.copy(failed = g.failed + 1) else g.copy(
-                        count = g.count + 1,
-                        status = if (g.count + 1 < g.targetByNow) "behind" else "on_track",
-                    )
+                    val bumped = g.plusEntry(failed)
                     GoalsApi.saveCache(context, snap.withGoal(bumped))
                 }
             }
@@ -195,7 +192,7 @@ class GoalsWidgetProvider : AppWidgetProvider() {
             )
             row.setTextColor(
                 R.id.widget_goal_count,
-                ContextCompat.getColor(context, if (live.isBehind && !live.complete) R.color.widget_behind else R.color.widget_text)
+                ContextCompat.getColor(context, R.color.widget_text)
             )
             row.setImageViewBitmap(R.id.widget_goal_bar, WidgetBarRenderer.render(context, barWidthPx, live, fraction))
 

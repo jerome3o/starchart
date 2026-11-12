@@ -25,9 +25,32 @@ object GoalsApi {
         val description: String? = null,
         /** Logged failures this period (red segments; don't count towards the target). */
         val failed: Int = 0,
+        /** Everything logged this period, oldest first: 'd' done, 'f' failed. */
+        val sequence: String? = null,
     ) {
         val isBehind get() = status == "behind"
         val complete get() = count >= target
+
+        /**
+         * What each bar slot shows, in order (one slot per unit of target).
+         * When more was logged than fits, the most recent entries win.
+         */
+        val slots: String get() {
+            val seq = sequence ?: ("d".repeat(count) + "f".repeat(failed))
+            val n = Math.ceil(target).toInt().coerceAtLeast(0)
+            return if (seq.length > n) seq.takeLast(n) else seq
+        }
+
+        /** This goal after logging one more done or failed entry (for instant UI). */
+        fun plusEntry(failed: Boolean): Goal = if (failed) {
+            copy(failed = this.failed + 1, sequence = (sequence ?: slots) + "f")
+        } else {
+            copy(
+                count = count + 1,
+                status = if (count + 1 < targetByNow) "behind" else "on_track",
+                sequence = (sequence ?: slots) + "d",
+            )
+        }
     }
 
     data class Period(val days: Int, val dayOfPeriod: Int, val fraction: Double, val startDate: String, val endDate: String)
@@ -69,6 +92,7 @@ object GoalsApi {
         periodEnd = g.getString("period_end"),
         description = if (g.isNull("description")) null else g.optString("description").ifEmpty { null },
         failed = g.optInt("failed", 0),
+        sequence = if (g.has("sequence") && !g.isNull("sequence")) g.optString("sequence") else null,
     )
 
     fun fetch(context: Context): Snapshot {
@@ -110,7 +134,8 @@ object GoalsApi {
                 .put("count", g.count).put("target_by_now", g.targetByNow).put("status", g.status)
                 .put("days_left", g.daysLeft).put("period_start", g.periodStart).put("period_end", g.periodEnd)
                 .put("description", g.description ?: JSONObject.NULL)
-                .put("failed", g.failed))
+                .put("failed", g.failed)
+                .put("sequence", g.sequence ?: JSONObject.NULL))
         }
         return JSONObject().put("timezone", s.timezone).put("periods", periods).put("goals", goals)
     }

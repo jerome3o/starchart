@@ -57,9 +57,11 @@ function goalsWithProgress(email, nowMs = Date.now()) {
     if (!periods.has(g.period_days)) periods.set(g.period_days, currentPeriod(nowMs, timeZone, g.period_days));
   }
   const counts = new Map();
+  const sequences = new Map();
   for (const [days, period] of periods) {
     const ids = goals.filter((g) => g.period_days === days).map((g) => g.id);
     for (const [id, c] of db.completionCounts(ids, period.startMs, period.endMs)) counts.set(id, c);
+    for (const [id, s] of db.completionSequences(ids, period.startMs, period.endMs)) sequences.set(id, s);
   }
   return {
     timezone: timeZone,
@@ -79,6 +81,8 @@ function goalsWithProgress(email, nowMs = Date.now()) {
         sort_order: g.sort_order,
         count,
         failed,
+        // Oldest first: 'd' done, 'f' failed. The bars fill in this order.
+        sequence: sequences.get(g.id) || '',
         target_by_now: Math.round(expected * 100) / 100,
         status: statusFor(count, expected),
         days_left: period.daysLeft,
