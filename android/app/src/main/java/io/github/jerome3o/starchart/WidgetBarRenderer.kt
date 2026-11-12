@@ -56,6 +56,12 @@ object WidgetBarRenderer {
         c.drawRect(left, barTop, left + barW * expectedFrac, barBottom, paint)
         paint.color = color(if (behind) R.color.widget_behind else R.color.widget_accent)
         c.drawRect(left, barTop, left + barW * doneFrac, barBottom, paint)
+        // Logged failures follow the done fill in red.
+        val failFrac = (goal.failed / target).toFloat().coerceIn(0f, 1f - doneFrac)
+        if (failFrac > 0f) {
+            paint.color = color(R.color.widget_failed)
+            c.drawRect(left + barW * doneFrac, barTop, left + barW * (doneFrac + failFrac), barBottom, paint)
+        }
 
         // Notches: one per unit of target (every 5th for big targets).
         if (goal.target == Math.floor(goal.target) && goal.target > 1) {

@@ -32,6 +32,18 @@ class Haptics(context: Context) {
         v.vibrate(effect)
     }
 
+    /** A deflating buzz in time with the sad trombone: three dull thuds and a long sag. */
+    fun fail() {
+        val v = vibrator ?: return
+        val timings = longArrayOf(0, 120, 300, 120, 300, 120, 300, 700)
+        val effect = if (amplitude) {
+            VibrationEffect.createWaveform(timings, intArrayOf(0, 90, 0, 80, 0, 70, 0, 50), -1)
+        } else {
+            VibrationEffect.createWaveform(timings, -1)
+        }
+        v.vibrate(effect)
+    }
+
     fun celebrate() {
         val v = vibrator ?: return
         val timings = longArrayOf(0, 45, 55, 45, 55, 140)

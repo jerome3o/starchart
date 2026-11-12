@@ -53,6 +53,7 @@ function candidates(email, nowMs = Date.now()) {
         emoji: g.emoji,
         why_and_description: g.description || '(none given)',
         done_this_period: g.count,
+        logged_failures_this_period: g.failed,
         target_this_period: g.target,
         expected_by_now: g.target_by_now,
         behind_by: Math.round((g.target_by_now - g.count) * 10) / 10,

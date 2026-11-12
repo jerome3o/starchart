@@ -66,7 +66,7 @@ function goalsWithProgress(email, nowMs = Date.now()) {
     periods: Object.fromEntries([...periods].map(([days, p]) => [days, p])),
     goals: goals.map((g) => {
       const period = periods.get(g.period_days);
-      const count = counts.get(g.id) || 0;
+      const { done: count, failed } = counts.get(g.id) || { done: 0, failed: 0 };
       const expected = targetByNow(g, period);
       return {
         id: g.id,
@@ -78,6 +78,7 @@ function goalsWithProgress(email, nowMs = Date.now()) {
         hours_offset: g.hours_offset,
         sort_order: g.sort_order,
         count,
+        failed,
         target_by_now: Math.round(expected * 100) / 100,
         status: statusFor(count, expected),
         days_left: period.daysLeft,
@@ -134,11 +135,12 @@ function validateGoalInput(body, { partial = false } = {}) {
   return { fields: out, errors };
 }
 
-// Records a completion "now" (or at a given time) and returns fresh progress.
-function logCompletion(email, goalId, { time: atMs, source, clientId, note }) {
+// Records a completion (or, with `failed`, a failure) "now" or at a given time
+// and returns fresh progress. Undo removes whichever was logged last.
+function logCompletion(email, goalId, { time: atMs, source, clientId, note, failed = false }) {
   const goal = db.getGoal(email, goalId);
   if (!goal || goal.archived) return null;
-  const result = db.addCompletion(goalId, { time: atMs || Date.now(), source, clientId, note });
+  const result = db.addCompletion(goalId, { time: atMs || Date.now(), source, clientId, note, failed });
   return { ...result, goal: progressForGoal(email, goalId) };
 }
 
@@ -208,6 +210,7 @@ router.post('/goals/:id/completions', (req, res) => {
   const result = logCompletion(req.device.email, id, {
     time: atMs, source: 'app', clientId: body.client_id ? String(body.client_id).slice(0, 64) : null,
     note: body.note ? String(body.note).slice(0, 200) : null,
+    failed: body.failed === true,
   });
   if (!result) return res.status(404).json({ error: 'no such goal' });
   res.status(result.created ? 201 : 200).json(result.goal);

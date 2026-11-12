@@ -20,7 +20,8 @@ import java.util.Random
 
 /**
  * Transparent activity launched from the widget, drawn straight over the home
- * screen: slides up a card with the charge slider for one goal. Finishing the
+ * screen: slides up a card with the charge slider for one goal (right to log,
+ * left to log a failure). Finishing the
  * slide is the only way to log from the widget; it then celebrates and closes
  * itself, leaving you on the home screen.
  */
@@ -28,6 +29,7 @@ class WidgetActionActivity : Activity() {
 
     private val main = Handler(Looper.getMainLooper())
     private val sound = ChargeSound()
+    private var tint: FailTint? = null
     private lateinit var haptics: Haptics
     private lateinit var root: FrameLayout
     private var done = false
@@ -50,17 +52,24 @@ class WidgetActionActivity : Activity() {
 
     // --- Completion (only reachable by finishing the slider) ------------------------
 
-    private fun logAndCelebrate(goal: GoalsApi.Goal) {
+    private fun logAndCelebrate(goal: GoalsApi.Goal, failed: Boolean) {
         if (done) return
         done = true
-        GoalsWidgetProvider.logFromWidget(this, goal.id)
-        haptics.celebrate()
-        sound.chime()
+        GoalsWidgetProvider.logFromWidget(this, goal.id, failed)
         sound.stop()
-        CelebrationView.show(root)
+        tint?.clear()
+        if (failed) {
+            haptics.fail()
+            sound.wahWah()
+            FailView.show(root)
+        } else {
+            haptics.celebrate()
+            sound.chime()
+            CelebrationView.show(root)
+        }
         // Tapping anywhere dismisses early.
         root.setOnClickListener { finishQuietly() }
-        main.postDelayed({ finishQuietly() }, 3200)
+        main.postDelayed({ finishQuietly() }, if (failed) 3400 else 3200)
     }
 
     // --- Charge card ------------------------------------------------------------------
@@ -102,7 +111,10 @@ class WidgetActionActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setPadding(0, dp(4), 0, dp(18))
         }
-        val slider = ChargeSliderView(this).apply { label = getString(R.string.slide_to_log) }
+        val slider = ChargeSliderView(this).apply {
+            label = getString(R.string.slide_to_log)
+            failLabel = getString(R.string.slide_to_fail)
+        }
         card.addView(title)
         card.addView(subtitle)
         card.addView(slider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
@@ -122,6 +134,8 @@ class WidgetActionActivity : Activity() {
 
             override fun onChargeProgress(progress: Float) {
                 sound.level = progress
+                if (tint == null) tint = FailTint(root)
+                tint?.update(progress)
                 val amount = 12f * density * progress * progress
                 card.translationX = (random.nextFloat() * 2 - 1) * amount
                 card.translationY = (random.nextFloat() * 2 - 1) * amount * 0.6f
@@ -132,16 +146,17 @@ class WidgetActionActivity : Activity() {
                 haptics.tick((index + 1f) / slider.notches.size)
             }
 
-            override fun onChargeComplete() {
+            override fun onChargeComplete(failed: Boolean) {
                 sound.stop()
                 card.animate().translationX(0f).rotation(0f)
                     .translationY(card.height.toFloat()).setStartDelay(250).setDuration(300).start()
                 ObjectAnimator.ofFloat(scrim, View.ALPHA, 1f, 0f).setDuration(500).start()
-                logAndCelebrate(goal)
+                logAndCelebrate(goal, failed)
             }
 
             override fun onChargeRelease(completed: Boolean) {
                 sound.stop()
+                if (!completed) { tint?.clear(); tint = null }
                 card.animate().translationX(0f).translationY(0f).rotation(0f).setDuration(160).start()
             }
         }
