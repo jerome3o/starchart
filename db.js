@@ -666,6 +666,23 @@ function completionCounts(goalIds, fromMs, toMs) {
   return new Map(rows.map((r) => [r.goal_id, { done: r.done || 0, failed: r.failed || 0 }]));
 }
 
+// What was logged in [fromMs, toMs), oldest first, as a string per goal:
+// 'd' for done, 'f' for failed (e.g. "ffffd"). Bars draw one slot per char.
+function completionSequences(goalIds, fromMs, toMs) {
+  if (!goalIds.length) return new Map();
+  const rows = db
+    .prepare(
+      `SELECT goal_id, failed FROM completions
+       WHERE goal_id IN (${goalIds.map(() => '?').join(',')})
+         AND deleted_at IS NULL AND time >= ? AND time < ?
+       ORDER BY time ASC, id ASC`
+    )
+    .all(...goalIds, fromMs, toMs);
+  const out = new Map();
+  for (const r of rows) out.set(r.goal_id, (out.get(r.goal_id) || '') + (r.failed ? 'f' : 'd'));
+  return out;
+}
+
 function listCompletions(goalId, fromMs, toMs) {
   return db
     .prepare(
@@ -891,6 +908,7 @@ module.exports = {
   createGoal,
   updateGoal,
   completionCounts,
+  completionSequences,
   listCompletions,
   addCompletion,
   undoLatestCompletion,

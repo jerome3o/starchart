@@ -149,12 +149,11 @@ class StarChartFragment : Fragment() {
     }
 
     private fun logCompletion(goal: GoalsApi.Goal) {
-        val optimistic = goal.copy(count = goal.count + 1, status = if (goal.count + 1 < goal.targetByNow) "behind" else "on_track")
-        mutate(optimistic) { GoalsApi.logCompletion(requireContext(), goal.id) }
+        mutate(goal.plusEntry(failed = false)) { GoalsApi.logCompletion(requireContext(), goal.id) }
     }
 
     private fun logFailure(goal: GoalsApi.Goal) {
-        mutate(goal.copy(failed = goal.failed + 1)) { GoalsApi.logCompletion(requireContext(), goal.id, failed = true) }
+        mutate(goal.plusEntry(failed = true)) { GoalsApi.logCompletion(requireContext(), goal.id, failed = true) }
     }
 
     /** Removes whatever was logged last (a completion or a failure); the server decides which. */
@@ -334,7 +333,7 @@ class StarChartFragment : Fragment() {
                 description.visibility = if (goal.description.isNullOrBlank()) View.GONE else View.VISIBLE
                 count.text = getString(R.string.goal_count, goal.count, formatNumber(goal.target)) +
                     if (goal.failed > 0) "  ✗${goal.failed}" else ""
-                bar.set(goal.count, goal.failed, goal.target, goal.targetByNow, goal.isBehind && !goal.complete)
+                bar.set(goal.slots, goal.target, goal.targetByNow)
                 status.text = when {
                     goal.complete -> getString(R.string.status_complete, goal.daysLeft)
                     goal.isBehind -> getString(R.string.status_behind, goal.targetByNow, goal.daysLeft)

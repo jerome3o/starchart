@@ -43,9 +43,7 @@ object WidgetBarRenderer {
         val bar = RectF(left, barTop, right, barBottom)
 
         val target = goal.target.coerceAtLeast(0.0001)
-        val doneFrac = (goal.count / target).coerceIn(0.0, 1.0).toFloat()
         val expectedFrac = (goal.targetByNow / target).coerceIn(0.0, 1.0).toFloat()
-        val behind = goal.isBehind && !goal.complete
 
         // Track, expected band, done fill — clipped to the rounded bar.
         c.save()
@@ -54,13 +52,13 @@ object WidgetBarRenderer {
         c.drawRect(bar, paint)
         paint.color = color(R.color.widget_pace)
         c.drawRect(left, barTop, left + barW * expectedFrac, barBottom, paint)
-        paint.color = color(if (behind) R.color.widget_behind else R.color.widget_accent)
-        c.drawRect(left, barTop, left + barW * doneFrac, barBottom, paint)
-        // Logged failures follow the done fill in red.
-        val failFrac = (goal.failed / target).toFloat().coerceIn(0f, 1f - doneFrac)
-        if (failFrac > 0f) {
-            paint.color = color(R.color.widget_failed)
-            c.drawRect(left + barW * doneFrac, barTop, left + barW * (doneFrac + failFrac), barBottom, paint)
+        // One slot per entry in the order logged: accent for done, red for failed.
+        val slots = goal.slots
+        for ((i, kind) in slots.withIndex()) {
+            paint.color = color(if (kind == 'f') R.color.widget_failed else R.color.widget_accent)
+            val x0 = left + barW * (i / target).toFloat()
+            val x1 = minOf(right, left + barW * ((i + 1) / target).toFloat())
+            c.drawRect(x0, barTop, x1, barBottom, paint)
         }
 
         // Notches: one per unit of target (every 5th for big targets).

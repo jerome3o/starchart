@@ -6,7 +6,6 @@
     <color name="widget_track">#3A3842</color>
     <color name="widget_pace">#5E5872</color>
     <color name="widget_accent">#D0BCFF</color>
-    <color name="widget_behind">#FFB74D</color>
     <color name="widget_failed">#FF5252</color>
     <color name="widget_on_accent">#381E72</color>
 </resources>
