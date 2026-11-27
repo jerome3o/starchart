@@ -50,13 +50,16 @@ app.use(
 );
 
 // Browser hardening for every response: no framing (clickjacking on the
-// consent and token pages), no MIME sniffing, no referrers (OAuth codes live
-// in URLs), HTTPS only.
+// consent and token pages), no MIME sniffing, no referrers to other sites
+// (OAuth codes live in URLs), HTTPS only.
 app.use((req, res, next) => {
   res.set('X-Frame-Options', 'DENY');
   res.set('Content-Security-Policy', "frame-ancestors 'none'; base-uri 'none'; form-action 'self' https:; object-src 'none'");
   res.set('X-Content-Type-Options', 'nosniff');
-  res.set('Referrer-Policy', 'no-referrer');
+  // same-origin, not no-referrer: with no-referrer browsers send "Origin: null"
+  // on our own form posts, which the CSRF check below can't tell apart from
+  // a foreign site. Nothing is sent to other sites either way.
+  res.set('Referrer-Policy', 'same-origin');
   res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   if (isProd) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
@@ -69,7 +72,9 @@ app.use((req, res, next) => {
 const tokenAuthedPaths = /^\/(api\/|mcp$|oauth\/token$|oauth\/register$)/;
 app.use((req, res, next) => {
   if (req.method !== 'POST' || tokenAuthedPaths.test(req.path)) return next();
-  const source = req.get('origin') || req.get('referer');
+  // "null" (privacy settings, no-referrer contexts) says nothing; fall back to Referer.
+  const originHeader = req.get('origin');
+  const source = (originHeader && originHeader !== 'null' ? originHeader : null) || req.get('referer');
   if (!source) return next();
   let origin;
   try {
