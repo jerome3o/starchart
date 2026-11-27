@@ -42,6 +42,36 @@ function localMidnightUtc(year, month, day, timeZone) {
   return guess - tzOffsetMs(first, timeZone);
 }
 
+// UTC ms of a local wall-clock time in a timezone (same DST-safe refinement).
+function zonedToUtc(year, month, day, hour, minute, timeZone) {
+  const guess = Date.UTC(year, month - 1, day, hour, minute);
+  const first = guess - tzOffsetMs(guess, timeZone);
+  return guess - tzOffsetMs(first, timeZone);
+}
+
+// "2026-12-01T07:00" (local, in timeZone) or a full ISO time with Z/offset -> UTC ms, or null.
+function parseLocalDateTime(str, timeZone) {
+  const s = String(str || '').trim();
+  const local = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(s);
+  if (local) {
+    const [y, mo, d, h, mi] = local.slice(1, 6).map(Number);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return null;
+    return zonedToUtc(y, mo, d, h, mi, timeZone);
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/.test(s)) {
+    const t = Date.parse(s);
+    return Number.isFinite(t) ? t : null;
+  }
+  return null;
+}
+
+// "Tue 2026-12-01 07:00" in timeZone.
+function formatLocal(ms, timeZone) {
+  const p = localParts(ms, timeZone);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${p.weekday} ${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}`;
+}
+
 function parseYmd(dateStr) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
@@ -57,4 +87,7 @@ function addDays(y, m, d, n) {
   return [t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate()];
 }
 
-module.exports = { validTimeZone, localParts, tzOffsetMs, localMidnightUtc, parseYmd, daysBetween, addDays };
+module.exports = {
+  validTimeZone, localParts, tzOffsetMs, localMidnightUtc, zonedToUtc, parseLocalDateTime, formatLocal,
+  parseYmd, daysBetween, addDays,
+};

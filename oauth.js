@@ -22,7 +22,7 @@ const SCOPES = {
   'location:read': 'Read your location history',
   'goals:read': 'See your goals and progress',
   'goals:write': 'Log, undo and create goals',
-  'phone:control': 'Diagnose and fix the Starchart app on your phone (fixed command list: diagnostics, restart tracking, sync, fresh fix, widget refresh, notifications)',
+  'phone:control': 'Control the Starchart app on your phone: set alarms, reminders and persistent notifications, send notifications, and diagnose and fix tracking (diagnostics, restart tracking, sync, fresh fix, widget refresh)',
 };
 // Scopes a client only gets if the consent box is ticked (unticked by default).
 const OPT_IN_SCOPES = new Set(['phone:control']);

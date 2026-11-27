@@ -67,6 +67,26 @@ CREATE TABLE IF NOT EXISTS phone_commands (
 
 CREATE INDEX IF NOT EXISTS idx_phone_commands_device_status ON phone_commands (device_id, status);
 
+-- Alarms, reminders and persistent notifications set through MCP. The phone
+-- mirrors the active ones into Android's AlarmManager and reports back.
+--   status: scheduled -> fired (alarm rang / reminder shown / persistent showing)
+--           -> dismissed;  or cancelled (by MCP) / missed (phone was off too long).
+CREATE TABLE IF NOT EXISTS phone_schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  text TEXT,
+  fire_at INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'scheduled',
+  requested_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_schedules_device_status ON phone_schedules (device_id, status);
+
 -- Claude-written reminders sent for goals the user is behind on (nudges.js).
 CREATE TABLE IF NOT EXISTS nudges (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -389,6 +409,14 @@ function boundedJson(value) {
   return text.length <= 200000 ? text : JSON.stringify({ truncated: true, preview: text.slice(0, 190000) });
 }
 
+function pendingCommandId(deviceId, command) {
+  const row = db.prepare(
+    `SELECT id FROM phone_commands WHERE device_id = ? AND command = ? AND status = 'pending' AND created_at >= ?
+     ORDER BY id DESC LIMIT 1`
+  ).get(deviceId, command, Date.now() - COMMAND_TTL_MS);
+  return row ? row.id : null;
+}
+
 function recentCommandCount(deviceId, sinceMs) {
   return db.prepare('SELECT COUNT(*) AS c FROM phone_commands WHERE device_id = ? AND created_at >= ?').get(deviceId, sinceMs).c;
 }
@@ -414,6 +442,72 @@ function listPhoneCommands(email, limit = 20) {
      FROM phone_commands c JOIN devices d ON d.id = c.device_id
      WHERE d.email = ? ORDER BY c.id DESC LIMIT ?`
   ).all(email.toLowerCase(), limit);
+}
+
+// --- Alarms, reminders, persistent notifications ------------------------------
+
+const SCHEDULE_KINDS = ['alarm', 'reminder', 'persistent'];
+
+function createSchedule({ email, deviceId, kind, title, text, fireAt, requestedBy }) {
+  const now = Date.now();
+  const info = db.prepare(
+    `INSERT INTO phone_schedules (email, device_id, kind, title, text, fire_at, requested_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(email.toLowerCase(), deviceId, kind, title, text || null, fireAt, requestedBy || null, now, now);
+  return getSchedule(email, info.lastInsertRowid);
+}
+
+function getSchedule(email, id) {
+  return db.prepare('SELECT * FROM phone_schedules WHERE id = ? AND email = ?').get(id, email.toLowerCase()) || null;
+}
+
+// Upcoming and still-showing items (and, with includePast, the last 30 days).
+function listSchedules(email, { includePast = false } = {}) {
+  const live = `status = 'scheduled' OR (status = 'fired' AND kind IN ('alarm', 'persistent'))`;
+  const sql = includePast
+    ? `SELECT * FROM phone_schedules WHERE email = ? AND (${live} OR updated_at >= ?) ORDER BY fire_at`
+    : `SELECT * FROM phone_schedules WHERE email = ? AND (${live}) ORDER BY fire_at`;
+  const args = includePast ? [email.toLowerCase(), Date.now() - 30 * 86400e3] : [email.toLowerCase()];
+  return db.prepare(sql).all(...args);
+}
+
+function activeScheduleCount(email) {
+  return db.prepare(
+    `SELECT COUNT(*) AS c FROM phone_schedules WHERE email = ? AND status IN ('scheduled', 'fired')`
+  ).get(email.toLowerCase()).c;
+}
+
+function cancelSchedule(email, id) {
+  return db.prepare(
+    `UPDATE phone_schedules SET status = 'cancelled', updated_at = ?
+     WHERE id = ? AND email = ? AND status IN ('scheduled', 'fired')`
+  ).run(Date.now(), id, email.toLowerCase()).changes;
+}
+
+// What the phone should have registered or showing right now.
+function schedulesForDevice(deviceId) {
+  return db.prepare(
+    `SELECT id, kind, title, text, fire_at, status FROM phone_schedules
+     WHERE device_id = ? AND (status = 'scheduled' OR (status = 'fired' AND kind IN ('alarm', 'persistent')))
+     ORDER BY fire_at`
+  ).all(deviceId);
+}
+
+// The phone reports what happened. Snoozing an alarm moves it back to
+// scheduled at a new time; otherwise status only moves forward.
+function reportSchedule(deviceId, id, status, fireAt) {
+  const now = Date.now();
+  if (status === 'snoozed') {
+    return db.prepare(
+      `UPDATE phone_schedules SET status = 'scheduled', fire_at = ?, updated_at = ?
+       WHERE id = ? AND device_id = ? AND kind = 'alarm' AND status IN ('scheduled', 'fired')`
+    ).run(fireAt, now, id, deviceId).changes;
+  }
+  const from = status === 'fired' ? `('scheduled')` : `('scheduled', 'fired')`;
+  return db.prepare(
+    `UPDATE phone_schedules SET status = ?, updated_at = ?
+     WHERE id = ? AND device_id = ? AND status IN ${from}`
+  ).run(status, now, id, deviceId).changes;
 }
 
 // The device that most recently sent a fix (the one to send commands to).
@@ -894,6 +988,15 @@ function revokeApiToken(email, id) {
 }
 
 module.exports = {
+  SCHEDULE_KINDS,
+  createSchedule,
+  getSchedule,
+  listSchedules,
+  activeScheduleCount,
+  cancelSchedule,
+  schedulesForDevice,
+  reportSchedule,
+  pendingCommandId,
   hashToken,
   createApiToken,
   apiTokenGrant,

@@ -76,6 +76,7 @@ class MainActivity : AppCompatActivity() {
             LocationService.start(this, "app_opened")
         }
         PhoneCommands.pollAsync(this)
+        Schedules.syncAsync(this)
     }
 
     private fun showTab(itemId: Int) {

@@ -119,6 +119,23 @@ router.post('/commands/:id/result', (req, res) => {
   res.json({ updated });
 });
 
+// Alarms, reminders and persistent notifications for this phone (set via MCP).
+router.get('/schedules', (req, res) => {
+  res.json({ schedules: db.schedulesForDevice(req.device.id) });
+});
+
+const SCHEDULE_REPORTS = ['fired', 'dismissed', 'missed', 'snoozed'];
+router.post('/schedules/:id/status', (req, res) => {
+  const id = Number(req.params.id);
+  const body = req.body || {};
+  if (!Number.isInteger(id) || !SCHEDULE_REPORTS.includes(body.status)) return res.status(400).json({ error: 'bad request' });
+  const fireAt = Number(body.fire_at);
+  if (body.status === 'snoozed' && !(plausibleTime(fireAt) && fireAt <= Date.now() + 3 * 3600e3)) {
+    return res.status(400).json({ error: 'fire_at must be within 3 hours' });
+  }
+  res.json({ updated: db.reportSchedule(req.device.id, id, body.status, fireAt) });
+});
+
 // In-app chat with Claude (all MCP tools, as this device's user). Capped per
 // device per hour and per account per day, and the history size is bounded,
 // so a leaked device token can't run up the Claude bill.
