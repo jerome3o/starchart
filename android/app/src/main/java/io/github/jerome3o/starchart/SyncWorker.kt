@@ -21,7 +21,10 @@ import java.util.concurrent.TimeUnit
 class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
 
     override fun doWork(): Result = when (Sync.uploadPending(applicationContext)) {
-        Sync.Outcome.OK -> Result.success().also { PhoneCommands.poll(applicationContext) }
+        Sync.Outcome.OK -> Result.success().also {
+            PhoneCommands.poll(applicationContext)
+            try { Schedules.sync(applicationContext) } catch (_: Exception) {}
+        }
         Sync.Outcome.UNAUTHORIZED -> Result.failure()
         Sync.Outcome.FAILED -> Result.retry()
     }

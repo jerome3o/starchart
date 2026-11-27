@@ -27,6 +27,8 @@
         android:maxSdkVersion="32" />
     <!-- Sideloaded app: exact alarms without a user toggle, for future reminders. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Alarms set through MCP take over the screen when they ring. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:allowBackup="true"
@@ -91,6 +93,20 @@
             android:name=".LocationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- Alarms, reminders and pinned notifications set through MCP (Schedules.kt). -->
+        <receiver
+            android:name=".ScheduleReceiver"
+            android:exported="false" />
+
+        <activity
+            android:name=".AlarmActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:turnScreenOn="true" />
 
         <!-- Exact-alarm watchdog that restarts tracking / fetches a fix if it goes quiet. -->
         <receiver

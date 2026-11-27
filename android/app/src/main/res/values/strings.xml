@@ -42,6 +42,15 @@
     <string name="goals_empty">No goals yet — tap New goal to add one.</string>
     <string name="goals_load_failed">Couldn\'t load goals: %1$s</string>
     <string name="goal_action_failed">That didn\'t save: %1$s</string>
+    <string name="alarm_snooze">Snooze 10 min</string>
+    <string name="alarm_dismiss">Dismiss</string>
+    <string name="pinned_done">Done</string>
+    <string name="channel_alarms">Alarms</string>
+    <string name="channel_alarms_description">Alarms set through Claude; they ring until dismissed</string>
+    <string name="channel_scheduled_reminders">Scheduled reminders</string>
+    <string name="channel_scheduled_reminders_description">Reminders set for a date and time through Claude</string>
+    <string name="channel_pinned">Pinned notifications</string>
+    <string name="channel_pinned_description">Notifications that stay until you tap Done</string>
     <string name="slide_to_log">Did it ▶</string>
     <string name="slide_to_fail">◀ Failed</string>
     <string name="btn_undo">−</string>

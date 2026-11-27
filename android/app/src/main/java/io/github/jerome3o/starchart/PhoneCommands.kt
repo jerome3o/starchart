@@ -70,6 +70,7 @@ object PhoneCommands {
             JSONObject().put("goals", snapshot.goals.size)
         }
         "notify" -> notify(context, args)
+        "sync_schedules" -> Schedules.sync(context)
         else -> throw IllegalArgumentException("unknown command $name")
     }
 
@@ -114,6 +115,7 @@ object PhoneCommands {
             })
         }
         out.put("app_functions", appFunctions(context))
+        out.put("schedules", Schedules.status(context).put("local_items", Schedules.items(context).size))
         return out
     }
 

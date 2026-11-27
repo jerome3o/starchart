@@ -155,6 +155,16 @@ uploads (the `/api/fixes` response flags waiting commands), from the
 hour and are listed on the home page. `send_notification` is the shortcut
 for "show this text on my phone".
 
+**Alarms, reminders, pinned notifications (`phone:control`):** `set_alarm`
+(rings with the alarm sound until Dismiss / Snooze, full screen when allowed,
+any date up to a year ahead), `set_reminder` (a heads-up notification at a
+date and time), `show_persistent_notification` (stays until Done; comes back
+after a reboot), `list_scheduled` and `cancel_scheduled`. Times are local
+wall-clock (`2026-12-01T07:00`) in the user's timezone. The server keeps the
+list (`phone_schedules`); the app mirrors it into AlarmManager (synced on
+change via a `sync_schedules` command, hourly, on open and after a reboot from
+a local copy) and reports back when each goes off or is dismissed.
+
 **Connect Claude.ai:** Settings → Connectors → Add custom connector → URL
 `https://starchart.fly.dev/mcp` → Connect. You'll be sent through Google
 login and a consent page; after that Claude can call the tools.

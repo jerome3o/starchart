@@ -23,6 +23,9 @@ class BootReceiver : BroadcastReceiver() {
             intent.action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) return
         Notifications.turnOffRecurringOnce(context)
+        // Alarms and reminders are cleared by a reboot: put them back from the local copy.
+        try { Schedules.restoreLocal(context) } catch (_: Exception) {}
+        Schedules.syncAsync(context)
         if (!Prefs.get(context).getBoolean(Prefs.KEY_TRACKING_ENABLED, false)) return
         val reason = if (intent.action == Intent.ACTION_BOOT_COMPLETED) "boot" else "app_updated"
         TrackingWatchdog.schedule(context)

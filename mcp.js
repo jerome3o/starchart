@@ -8,6 +8,7 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const { z } = require('zod');
 const db = require('./db');
 const goals = require('./goals');
+const time = require('./time');
 
 const MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
 
@@ -271,6 +272,7 @@ const PHONE_COMMANDS = {
   fresh_fix: 'Take one high-accuracy location fix now (up to ~30 s) and upload it.',
   refresh_widget: 'Re-fetch goals from the server and redraw the home-screen widget.',
   notify: 'Show a notification on the phone (args: title, text, optional open = one of settings targets) — use it to ask the user to fix a permission or setting.',
+  sync_schedules: 'Re-fetch alarms, reminders and persistent notifications and re-register them with Android (the schedule tools do this automatically).',
 };
 const NOTIFY_OPEN_TARGETS = ['app', 'app_settings', 'battery_optimization', 'exact_alarms', 'notification_settings', 'overlay'];
 
@@ -353,6 +355,160 @@ function registerPhoneTools(server, email, clientName) {
       },
     },
     async ({ title, text, open, wait_seconds }) => runCommand('notify', { title, text, open }, null, wait_seconds)
+  );
+
+  // --- Alarms, reminders, persistent notifications ---------------------------
+
+  const MAX_ACTIVE_SCHEDULES = 50;
+  const tz = () => db.getTimezone(email);
+  const nowLocal = () => `${time.formatLocal(Date.now(), tz())} (${tz()})`;
+
+  const describe = (row) => {
+    const mins = Math.round((row.fire_at - Date.now()) / 60000);
+    const abs = Math.abs(mins);
+    const span = abs < 90 ? `${abs} min` : abs < 48 * 60 ? `${Math.round(abs / 60)} h` : `${Math.round(abs / 1440)} days`;
+    return {
+      id: row.id,
+      kind: row.kind,
+      title: row.title,
+      text: row.text || null,
+      at_local: `${time.formatLocal(row.fire_at, tz())} (${tz()})`,
+      at_utc: new Date(row.fire_at).toISOString(),
+      when: mins >= 0 ? `in ${span}` : `${span} ago`,
+      status: row.status,
+    };
+  };
+
+  // Tells the phone to re-sync its schedules and waits briefly for it to confirm.
+  const pushToPhone = async (deviceId, waitSeconds) => {
+    let id = db.pendingCommandId(deviceId, 'sync_schedules');
+    if (id == null) {
+      if (db.recentCommandCount(deviceId, Date.now() - 3600e3) >= 60) {
+        return { phone_confirmed: false, note: 'Phone command limit reached this hour; the phone will still pick this up on its next hourly sync.' };
+      }
+      id = db.queuePhoneCommand(deviceId, 'sync_schedules', {}, clientName);
+    }
+    const deadline = Date.now() + waitSeconds * 1000;
+    let row = db.getPhoneCommand(email, id);
+    while (Date.now() < deadline && (row.status === 'pending' || row.status === 'delivered')) {
+      await sleep(1000);
+      row = db.getPhoneCommand(email, id);
+    }
+    if (row.status === 'done') return { phone_confirmed: true, phone: row.result };
+    return {
+      phone_confirmed: false,
+      note: row.status === 'failed'
+        ? `The phone could not sync: ${JSON.stringify(row.result)}`
+        : 'Saved. The phone has not synced it yet (it does within minutes while awake, at the latest on its hourly sync); check with list_scheduled.',
+    };
+  };
+
+  const resolveAt = (at, { optional = false } = {}) => {
+    if (at == null || at === '') return optional ? { ms: Date.now() } : { error: 'at is required' };
+    const ms = time.parseLocalDateTime(at, tz());
+    if (ms == null) return { error: `Could not read "${at}". Use local time like 2026-12-01T07:00 (the user's timezone is ${tz()}; it is now ${nowLocal()}).` };
+    if (ms < Date.now() - 60e3) return { error: `${time.formatLocal(ms, tz())} is in the past (it is now ${nowLocal()}).` };
+    if (ms > Date.now() + 366 * 86400e3) return { error: 'At most a year ahead.' };
+    return { ms: Math.max(ms, Date.now()) };
+  };
+
+  const createAndPush = async (kind, title, text, at, waitSeconds, { optionalAt = false } = {}) => {
+    const device = db.mostRecentDevice(email);
+    if (!device) return error('No linked phone found (see list_devices).');
+    if (db.activeScheduleCount(email) >= MAX_ACTIVE_SCHEDULES) {
+      return error(`There are already ${MAX_ACTIVE_SCHEDULES} active alarms/reminders; cancel some first (list_scheduled).`);
+    }
+    const when = resolveAt(at, { optional: optionalAt });
+    if (when.error) return error(when.error);
+    const row = db.createSchedule({ email, deviceId: device.id, kind, title, text, fireAt: when.ms, requestedBy: clientName });
+    const pushed = await pushToPhone(device.id, waitSeconds);
+    return json({ created: describe(row), now_local: nowLocal(), ...pushed });
+  };
+
+  const atDescription = "When, as local wall-clock time in the user's timezone: YYYY-MM-DDTHH:MM (e.g. 2026-12-01T07:00). "
+    + 'An ISO time with Z or an offset also works. Work out relative days ("next Tuesday") from now_local in get_overview or list_scheduled; '
+    + 'the result echoes the weekday so you can check it.';
+
+  server.registerTool(
+    'set_alarm',
+    {
+      title: 'Set an alarm',
+      description: 'Set a real alarm on the phone for a date and time, any number of days ahead (up to a year). '
+        + 'It rings with the alarm sound until dismissed (Dismiss / Snooze 10 min, full screen when the phone allows it) '
+        + "and shows as the next alarm in Android's status bar. One-off; no repeats.",
+      inputSchema: {
+        at: z.string().describe(atDescription),
+        label: z.string().max(80).default('Alarm').describe('Shown on the alarm screen'),
+        wait_seconds: z.number().int().min(0).max(55).default(20).describe('How long to wait for the phone to confirm'),
+      },
+    },
+    async ({ at, label, wait_seconds }) => createAndPush('alarm', label || 'Alarm', null, at, wait_seconds)
+  );
+
+  server.registerTool(
+    'set_reminder',
+    {
+      title: 'Set a reminder',
+      description: 'Show a reminder notification on the phone at a date and time (up to a year ahead). '
+        + 'Heads-up notification with sound; tapping or swiping it clears it.',
+      inputSchema: {
+        at: z.string().describe(atDescription),
+        title: z.string().min(1).max(80),
+        text: z.string().max(400).default(''),
+        wait_seconds: z.number().int().min(0).max(55).default(20),
+      },
+    },
+    async ({ at, title, text, wait_seconds }) => createAndPush('reminder', title, text, at, wait_seconds)
+  );
+
+  server.registerTool(
+    'show_persistent_notification',
+    {
+      title: 'Show a persistent notification',
+      description: 'Pin a notification on the phone that stays until the user taps Done on it (or it is cancelled with '
+        + 'cancel_scheduled). It comes back after a reboot. Shows now, or at a given time. Good for to-dos and '
+        + "things that mustn't be forgotten.",
+      inputSchema: {
+        title: z.string().min(1).max(80),
+        text: z.string().max(400).default(''),
+        at: z.string().optional().describe(`Optional; omit to show now. ${atDescription}`),
+        wait_seconds: z.number().int().min(0).max(55).default(20),
+      },
+    },
+    async ({ title, text, at, wait_seconds }) => createAndPush('persistent', title, text, at, wait_seconds, { optionalAt: true })
+  );
+
+  server.registerTool(
+    'list_scheduled',
+    {
+      title: 'List alarms, reminders and persistent notifications',
+      description: 'Upcoming alarms and reminders, and persistent notifications still showing, soonest first. '
+        + 'include_past adds ones from the last 30 days that went off, were dismissed, cancelled or missed.',
+      inputSchema: { include_past: z.boolean().default(false) },
+    },
+    async ({ include_past }) => json({
+      now_local: nowLocal(),
+      items: db.listSchedules(email, { includePast: include_past }).map(describe),
+    })
+  );
+
+  server.registerTool(
+    'cancel_scheduled',
+    {
+      title: 'Cancel an alarm, reminder or persistent notification',
+      description: 'Cancel an upcoming alarm or reminder, stop a ringing alarm, or remove a persistent notification, by id from list_scheduled.',
+      inputSchema: {
+        id: z.number().int(),
+        wait_seconds: z.number().int().min(0).max(55).default(20),
+      },
+    },
+    async ({ id, wait_seconds }) => {
+      const row = db.getSchedule(email, id);
+      if (!row) return error('No such item (see list_scheduled).');
+      if (!db.cancelSchedule(email, id)) return error(`Item ${id} is already ${row.status}.`);
+      const pushed = await pushToPhone(row.device_id, wait_seconds);
+      return json({ cancelled: describe(db.getSchedule(email, id)), ...pushed });
+    }
   );
 
   server.registerTool(
